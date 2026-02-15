@@ -27,28 +27,65 @@ class OnlineTrainer(Trainer):
 	def eval(self):
 		"""Evaluate a TD-MPC2 agent."""
 		ep_rewards, ep_successes, ep_lengths = [], [], []
-		for i in range(self.cfg.eval_episodes // self.cfg.num_envs):
-			obs, done, ep_reward, t = self.env.reset(), torch.tensor(False), 0, 0
-			if self.cfg.save_video:
-				self.logger.video.init(self.env, enabled=(i==0))
-			while not done.any():
-				torch.compiler.cudagraph_mark_step_begin()
-				action = self.agent.act(obs, t0=t==0, eval_mode=True)
-				obs, reward, done, info = self.env.step(action)
-				ep_reward += reward
-				t += 1
-				if self.cfg.save_video:
-					self.logger.video.record(self.env)
-			assert done.all(), 'Vectorized environments must reset all environments at once.'
-			ep_rewards.append(ep_reward)
-			ep_successes.append(info['success'])
-			ep_lengths.append(t)
-			if self.cfg.save_video:
-				self.logger.video.save(self._step)
+		current_episode_steps = torch.zeros(self.cfg.num_envs, dtype=torch.long)
+		current_episode_rewards = torch.zeros(self.cfg.num_envs, dtype=torch.float)
+		n_episodes = torch.zeros(self.cfg.num_envs, dtype=torch.long)
+		episode_videos = [[] for _ in range(self.cfg.num_envs)]
+
+		# call reset() just to get obs of correct dimension
+		obs = self.eval_env.reset()
+		done = torch.ones(self.cfg.num_envs, dtype=torch.bool)
+		first_step = True
+		log_video_env_ids = set(list(range(self.cfg.num_videos)))
+
+		def _need_render():
+			return self.cfg.save_video and torch.any(n_episodes[:self.cfg.num_videos] == 0).item()
+
+		while n_episodes.sum() < self.cfg.eval_episodes or _need_render():
+			if done.any().item():
+				if not first_step:
+					ep_rewards.extend(current_episode_rewards[done].tolist())
+					current_episode_rewards[done] = 0.0
+					ep_successes.extend(info['success'][done].tolist())
+					ep_lengths.extend(current_episode_steps[done].tolist())
+					current_episode_steps[done] = 0
+					n_episodes[done] += 1
+
+				env_ids = done.nonzero(as_tuple=True)[0].tolist()
+				obs[done] = self.eval_env.reset(env_ids=env_ids)
+				if _need_render():
+					render_env_ids = list(log_video_env_ids.intersection(env_ids))
+					images = self.eval_env.render(env_ids=render_env_ids)
+					for env_id, image in zip(render_env_ids, images):
+						episode_videos[env_id].append([image])
+
+			first_step = False
+			torch.compiler.cudagraph_mark_step_begin()
+			action = self.agent.act(obs, t0=done.to(self.agent.device), eval_mode=True)
+			obs, reward, done, info = self.eval_env.step(action)
+			current_episode_rewards += reward
+			current_episode_steps += 1
+
+			if _need_render():
+				render_env_ids = list(log_video_env_ids)
+				images = self.eval_env.render(env_ids=render_env_ids)
+				for env_id, image in zip(render_env_ids, images):
+					episode_videos[env_id][-1].append(image)
+
+		if self.cfg.save_video:
+			for env_id in log_video_env_ids:
+				self.logger.log_video(episode_videos[env_id][0], f"env-{env_id}", self._step)
+
+		episode_rewards = ep_rewards[:self.cfg.eval_episodes]
+		episode_successes = ep_successes[:self.cfg.eval_episodes]
+		episode_lengths = ep_lengths[:self.cfg.eval_episodes]
 		return dict(
-			episode_reward=torch.cat(ep_rewards).mean(),
-			episode_success=info['success'].mean(),
-			episode_length= torch.tensor(ep_lengths, dtype=torch.float32).mean(),
+			episode_reward=torch.tensor(episode_rewards, dtype=torch.float32).mean().item(),
+			episode_success=torch.tensor(episode_successes, dtype=torch.float32).mean().item(),
+			episode_length= torch.tensor(episode_lengths, dtype=torch.float32).mean().item(),
+			episode_rewards=episode_rewards,
+			episode_successes=episode_successes,
+			episode_lengths=episode_lengths,
 		)
 
 	def to_td(self, obs, action=None, reward=None, terminated=None):
@@ -58,61 +95,77 @@ class OnlineTrainer(Trainer):
 		else:
 			obs = obs.unsqueeze(0).cpu()
 		if action is None:
-			action = torch.full_like(self.env.rand_act(), float('nan'))
+			action = torch.full_like(self.env.rand_act()[0], float('nan'))
 		if reward is None:
-			reward = torch.tensor(float('nan')).repeat(self.cfg.num_envs)
+			reward = torch.tensor(float('nan'))
 		if terminated is None:
-			terminated = torch.tensor(float('nan')).repeat(self.cfg.num_envs)
+			terminated = torch.tensor(float('nan'))
 		td = TensorDict(
 			obs=obs,
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 			terminated=terminated.unsqueeze(0),
-			batch_size=(1, self.cfg.num_envs,))
+		batch_size=(1,))
 		return td
 
 	def train(self):
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next = {}, torch.tensor(True), True
+		train_metrics, done = {}, torch.ones(self.cfg.num_envs, dtype=torch.bool)
+		self._tds = [None for _ in range(self.cfg.num_envs)]
+		first_step = True
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
-				eval_next = True
+				eval_metrics = self.eval()
+				eval_metrics.update(self.common_metrics())
+				self.logger.log(eval_metrics, 'eval')
 
 			# Reset environment
-			if done.any():
-				assert done.all(), 'Vectorized environments must reset all environments at once.'
-				if eval_next:
-					eval_metrics = self.eval()
-					eval_metrics.update(self.common_metrics())
-					self.logger.log(eval_metrics, 'eval')
-					eval_next = False
-
-				if self._step > 0:
-					if info['terminated'].any() and not self.cfg.episodic:
+			if done.any().item():
+				env_ids = done.nonzero(as_tuple=True)[0].tolist()
+				reset_obs = self.env.reset(env_ids=env_ids)
+				if first_step:
+					assert done.all().item()
+					first_step = False
+					obs = reset_obs
+				else:
+					if info['terminated'].any().item() and not self.cfg.episodic:
 						raise ValueError('Termination detected but you are not in episodic mode. ' \
 						'Set `episodic=true` to enable support for terminations.')
-					tds = torch.cat(self._tds)
+					episode_rewards, episode_successes, episode_lengths, episode_terminations = [], [], [], []
+					for env_id in env_ids:
+						tds = torch.cat(self._tds[env_id])
+						episode_rewards.append(tds['reward'].nansum(0).item())
+						episode_successes.append(info['success'][env_id].nanmean().item())
+						episode_lengths.append(len(self._tds[env_id]))
+						episode_terminations.append(info['terminated'][env_id].nanmean().item())
+						self._ep_idx = self.buffer.add(tds)
+
 					train_metrics.update(
-						episode_reward=tds['reward'].nansum(0).mean(),
-						episode_success=info['success'].nanmean(),
-						episode_length=len(self._tds),
-						episode_terminated=info['terminated'].nanmean(),
+						episode_rewards=episode_rewards,
+						episode_successes=episode_successes,
+						episode_lengths=episode_lengths,
+						episode_terminations=episode_terminations,
+						episode_reward=torch.tensor(episode_rewards, dtype=torch.float32).mean().item(),
+						episode_success=torch.tensor(episode_successes, dtype=torch.float32).mean().item(),
+						episode_length=torch.tensor(episode_lengths, dtype=torch.float32).mean().item(),
+						episode_terminated=torch.tensor(episode_terminations, dtype=torch.float32).mean().item(),
 					)
 					train_metrics.update(self.common_metrics())
 					self.logger.log(train_metrics, 'train')
-					self._ep_idx = self.buffer.add(tds)
+					obs[done] = reset_obs
 
-				obs = self.env.reset()
-				self._tds = [self.to_td(obs)]
+				for env_id in env_ids:
+					self._tds[env_id] = [self.to_td(obs[env_id])]
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
-				action = self.agent.act(obs, t0=len(self._tds)==1)
+				action = self.agent.act(obs, t0=done.to(self.agent.device))
 			else:
 				action = self.env.rand_act()
 			obs, reward, done, info = self.env.step(action)
-			self._tds.append(self.to_td(obs, action, reward, info['terminated']))
+			for env_id in range(self.cfg.num_envs):
+				self._tds[env_id].append(self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id]))
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
@@ -123,10 +176,11 @@ class OnlineTrainer(Trainer):
 					num_updates = max(1, int(self.cfg.num_envs / self.cfg.steps_per_update))
 				for _ in range(num_updates):
 					_train_metrics = self.agent.update(self.buffer)
+					_train_metrics = {k: v.item() for k, v in _train_metrics.items()}
 				train_metrics.update(_train_metrics)
 				if self._step == self.cfg.seed_steps:
 					print('Pretraining complete.')
 
 			self._step += self.cfg.num_envs
-	
+
 		self.logger.finish(self.agent)

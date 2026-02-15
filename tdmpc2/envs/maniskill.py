@@ -77,6 +77,6 @@ def make_env(cfg):
 		render_camera_cfgs=dict(width=384, height=384),
 	)
 	env = ManiSkillWrapper(env, cfg)
-	env = Timeout(env, max_episode_steps=100)
+	env = Timeout(env, max_episode_steps=cfg.get('episode_length', 100))
 	env.max_episode_steps = env._max_episode_steps
 	return env

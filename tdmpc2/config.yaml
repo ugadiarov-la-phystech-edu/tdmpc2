@@ -6,6 +6,7 @@ task: dog-run
 obs: state
 episodic: false
 num_envs: 1
+parallel: True
 
 # evaluation
 checkpoint: ???
@@ -71,10 +72,13 @@ wandb_entity: nicklashansen
 wandb_silent: false
 enable_wandb: true
 save_csv: true
+save_jsonlines: true
 
 # misc
 compile: true
 save_video: true
+num_videos: 1
+fps: 10
 save_agent: true
 seed: 1
 

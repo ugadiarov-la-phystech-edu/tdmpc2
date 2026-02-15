@@ -117,5 +117,5 @@ def make_env(cfg):
 	env = DMControlWrapper(env, domain)
 	if cfg.obs == 'rgb':
 		env = Pixels(env, cfg)
-	env = Timeout(env, max_episode_steps=500)
+	env = Timeout(env, max_episode_steps=cfg.get('episode_length', 500))
 	return env

@@ -55,3 +55,9 @@ class TensorWrapper(gym.Wrapper):
 		info['terminated'] = terminated.float()
 		info['truncated'] = truncated.float()
 		return self._obs_to_tensor(obs), reward, done, info
+
+	def render(self, **kwargs):
+		if self._wrapped_vectorized:
+			return self.env.render(**kwargs)
+		else:
+			return self.env.render()

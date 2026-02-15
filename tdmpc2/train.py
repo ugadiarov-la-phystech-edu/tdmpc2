@@ -52,11 +52,15 @@ def train(cfg: dict):
 	trainer_cls = OfflineTrainer if cfg.multitask else OnlineTrainer
 	trainer = trainer_cls(
 		cfg=cfg,
-		env=make_env(cfg),
+		env=make_env(cfg, is_eval=False),
+		eval_env=make_env(cfg, is_eval=True),
 		agent=TDMPC2(cfg),
 		buffer=Buffer(cfg),
 		logger=Logger(cfg),
 	)
+	if cfg.eval_freq % cfg.num_envs != 0:
+		raise ValueError(f'eval_freq {cfg.eval_freq} must be divisible by num_envs {cfg.num_envs}.')
+
 	trainer.train()
 	print('\nTraining completed successfully')
 

@@ -38,7 +38,8 @@ class TDMPC2(torch.nn.Module):
 		) if self.cfg.multitask else self._get_discount(cfg.episode_length)
 		print('Episode length:', cfg.episode_length)
 		print('Discount factor:', self.discount)
-		self._prev_mean = torch.nn.Buffer(torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
+		self._prev_mean_train = torch.nn.Buffer(torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
+		self._prev_mean_eval = self._prev_mean_train.clone()
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
@@ -96,7 +97,7 @@ class TDMPC2(torch.nn.Module):
 		return
 
 	@torch.no_grad()
-	def act(self, obs, t0=False, eval_mode=False, task=None):
+	def act(self, obs, t0, eval_mode=False, task=None):
 		"""
 		Select an action by planning in the latent space of the world model.
 
@@ -137,7 +138,7 @@ class TDMPC2(torch.nn.Module):
 		return G + discount * (1-termination) * self.model.Q(z, action, task, return_type='avg')
 
 	@torch.no_grad()
-	def _plan(self, obs, t0=False, eval_mode=False, task=None):
+	def _plan(self, obs, t0, eval_mode=False, task=None):
 		"""
 		Plan a sequence of actions using the learned world model.
 
@@ -150,6 +151,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: Action to take in the environment.
 		"""
+		prev_mean = self._prev_mean_eval if eval_mode else self._prev_mean_train
 		z = self.model.encode(obs, task)
 
 		# Sample policy trajectories
@@ -167,8 +169,11 @@ class TDMPC2(torch.nn.Module):
 		z = z.unsqueeze(1).repeat(1, self.cfg.num_samples, 1)
 		mean = torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device)
 		std = torch.full((self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, device=self.device)
-		if not t0:
-			mean[:, :-1] = self._prev_mean[:, 1:]
+		mean = torch.where(
+			t0[:, None, None],
+			mean,
+			torch.cat((prev_mean[:, 1:], mean[:, -1:]), dim=1)
+		)
 		actions = torch.empty(self.cfg.num_envs, self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
 		if self.cfg.num_pi_trajs > 0:
 			actions[:, :, :self.cfg.num_pi_trajs] = pi_actions
@@ -213,7 +218,7 @@ class TDMPC2(torch.nn.Module):
 		action, std_out = selected_actions[:, 0], std[:, 0]
 		if not eval_mode:
 			action = action + std_out * torch.randn_like(action)
-		self._prev_mean.copy_(mean)
+		prev_mean.copy_(mean)
 		return action.clamp(-1, 1)
 		
 	def update_pi(self, zs, task):

@@ -3,6 +3,8 @@ import os
 import datetime
 import re
 
+import jsonlines
+from moviepy.editor import ImageSequenceClip
 import numpy as np
 import pandas as pd
 from termcolor import colored
@@ -109,18 +111,20 @@ class Logger:
 	def __init__(self, cfg):
 		self._log_dir = make_dir(cfg.work_dir)
 		self._model_dir = make_dir(self._log_dir / "models")
+		self._videos_dir = make_dir(self._log_dir / "videos")
 		self._save_csv = cfg.save_csv
+		self._save_jsonlines = cfg.save_jsonlines
+		self._metrics_jsonl_path = self._log_dir / "metrics.jsonl"
 		self._save_agent = cfg.save_agent
 		self._group = cfg_to_group(cfg)
 		self._seed = cfg.seed
 		self._eval = []
+		self._fps = cfg.fps
 		print_run(cfg)
 		self.project = cfg.get("wandb_project", "none")
 		self.entity = cfg.get("wandb_entity", "none")
 		if not cfg.enable_wandb or self.project == "none" or self.entity == "none":
 			print(colored("Wandb disabled.", "blue", attrs=["bold"]))
-			cfg.save_agent = False
-			cfg.save_video = False
 			self._wandb = None
 			self._video = None
 			return
@@ -223,15 +227,21 @@ class Logger:
 
 	def log(self, d, category="train"):
 		assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"
+		if category in {"train", "eval"}:
+			xkey = "step"
+		elif category == "pretrain":
+			xkey = "iteration"
+		_d = dict()
+		_d["global_step"] = d["step"]
+		for k, v in d.items():
+			_d[category + "/" + k] = v
+
 		if self._wandb:
-			if category in {"train", "eval"}:
-				xkey = "step"
-			elif category == "pretrain":
-				xkey = "iteration"
-			_d = dict()
-			for k, v in d.items():
-				_d[category + "/" + k] = v
 			self._wandb.log(_d, step=d[xkey])
+		if self._save_jsonlines:
+			with jsonlines.open(self._metrics_jsonl_path, mode='a') as writer:
+				writer.write(_d)
+
 		if category == "eval" and self._save_csv:
 			keys = ["step", "episode_reward"]
 			self._eval.append(np.array([d[keys[0]], d[keys[1]]]))
@@ -239,3 +249,8 @@ class Logger:
 				self._log_dir / "eval.csv", header=keys, index=None
 			)
 		self._print(d, category)
+
+	def log_video(self, images, tag, step):
+		clip = ImageSequenceClip(images, self._fps)
+		path = str(self._videos_dir / f"{tag}_step-{step}.mp4")
+		clip.write_videofile(path)

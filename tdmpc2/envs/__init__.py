@@ -55,9 +55,9 @@ def make_multitask_env(cfg):
 	cfg.action_dims = env._action_dims
 	cfg.episode_lengths = env._episode_lengths
 	return env
-	
 
-def make_env(cfg):
+
+def make_env(cfg, is_eval=False):
 	"""
 	Make an environment for TD-MPC2 experiments.
 	"""
@@ -76,7 +76,7 @@ def make_env(cfg):
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
 		assert cfg.num_envs == 1 or cfg.get('obs', 'state') == 'state', \
 			'Vectorized environments only support state observations.'
-		env = Vectorized(cfg, fn)
+		env = Vectorized(cfg, fn, is_eval)
 		env = TensorWrapper(env)
 	try: # Dict
 		cfg.obs_shape = {k: v.shape for k, v in env.observation_space.spaces.items()}
@@ -84,5 +84,5 @@ def make_env(cfg):
 		cfg.obs_shape = {cfg.get('obs', 'state'): env.observation_space.shape}
 	cfg.action_dim = env.action_space.shape[0]
 	cfg.episode_length = env.max_episode_steps
-	cfg.seed_steps = max(1000, 5*cfg.episode_length) * cfg.num_envs
+	cfg.seed_steps = cfg.get("seed_steps", max(1000, 5*cfg.episode_length) * cfg.num_envs)
 	return env

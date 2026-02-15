@@ -1,41 +1,170 @@
+import functools
+import time
 from copy import deepcopy
 
-from gymnasium.vector import AsyncVectorEnv
+import cloudpickle
+import portal
 import numpy as np
 import torch
 
 
-class Vectorized():
+class Vectorized:
 	"""
 	Vectorized environment for TD-MPC2 online training.
 	"""
-
-	def __init__(self, cfg, env_fn):
-		super().__init__()
+	def __init__(self, cfg, env_fn, is_eval=False):
 		self.cfg = cfg
+		self.parallel = cfg.parallel
+		self.is_eval = is_eval
+		self.backend = None
 
-		def make():
+		def _make(rank):
 			_cfg = deepcopy(cfg)
 			_cfg.num_envs = 1
-			_cfg.seed = cfg.seed + np.random.randint(1000)
+			_cfg.seed = cfg.seed + rank
 			return env_fn(_cfg)
 
-		print(f'Creating {cfg.num_envs} environments...')
-		self.env = AsyncVectorEnv([make for _ in range(cfg.num_envs)])
-		env = make()
-		self.observation_space = env.observation_space
-		self.action_space = env.action_space
-		self.max_episode_steps = env.max_episode_steps
+		fns = [functools.partial(_make, i) for i in range(int(is_eval) * self.cfg.num_envs, (int(is_eval) + 1) * self.cfg.num_envs)]
+		if self.parallel:
+			import multiprocessing as mp
+			context = mp.get_context()
+			self.pipes, pipes = zip(*[context.Pipe() for _ in range(self.cfg.num_envs)])
+			self.stop = context.Event()
+			fns = [cloudpickle.dumps(fn) for fn in fns]
+			self.procs = [
+				portal.Process(self._env_server, self.stop, i, pipe, fn, start=True)
+				for i, (fn, pipe) in enumerate(zip(fns, pipes))]
+			self.pipes[0].send(('action_space',))
+			self.action_space = self._receive(self.pipes[0])
+			self.pipes[0].send(('observation_space',))
+			self.observation_space = self._receive(self.pipes[0])
+			self.pipes[0].send(('max_episode_steps',))
+			self.max_episode_steps = self._receive(self.pipes[0])
+		else:
+			self.envs = [fn() for fn in fns]
+			self.action_space = self.envs[0].action_space
+			self.observation_space = self.envs[0].observation_space
+			self.max_episode_steps = self.envs[0].max_episode_steps
+
+	def _receive(self, pipe):
+		try:
+			msg, arg = pipe.recv()
+			if msg == 'error':
+				raise RuntimeError(arg)
+			assert msg == 'result'
+			return arg
+		except Exception:
+			print('Terminating workers due to an exception.')
+			[proc.kill() for proc in self.procs]
+			raise
+
+	@staticmethod
+	def _env_server(stop, envid, pipe, ctor):
+		try:
+			ctor = cloudpickle.loads(ctor)
+			env = ctor()
+			while not stop.is_set():
+				if not pipe.poll(0.1):
+					time.sleep(0.1)
+					continue
+				try:
+					msg, *args = pipe.recv()
+				except EOFError:
+					return
+				if msg == 'step':
+					assert len(args) == 1
+					act = args[0]
+					step_result = env.step(act)
+					pipe.send(('result', step_result))
+				elif msg == 'reset':
+					assert len(args) == 0
+					reset_result = env.reset()
+					pipe.send(('result', reset_result))
+				elif msg == 'render':
+					assert len(args) == 0
+					image = env.render()
+					pipe.send(('result', image))
+				elif msg == 'observation_space':
+					assert len(args) == 0
+					pipe.send(('result', env.observation_space))
+				elif msg == 'action_space':
+					assert len(args) == 0
+					pipe.send(('result', env.action_space))
+				elif msg == 'max_episode_steps':
+					assert len(args) == 0
+					pipe.send(('result', env.max_episode_steps))
+				else:
+					raise ValueError(f'Invalid message {msg}')
+		except ConnectionResetError:
+			print('Connection to driver lost')
+		except Exception as e:
+			pipe.send(('error', e))
+			raise
+		finally:
+			try:
+				env.close()
+			except Exception:
+				pass
+			pipe.close()
 
 	def rand_act(self):
 		return torch.rand((self.cfg.num_envs, *self.action_space.shape)) * 2 - 1
 
-	def reset(self):
-		obs, _ = self.env.reset()
-		return obs
+	def _set_backend(self, data):
+		if self.backend is None:
+			if isinstance(data, np.ndarray):
+				self.backend = np
+			elif isinstance(data, torch.Tensor):
+				self.backend = torch
+			else:
+				raise ValueError('Invalid type:', type(data))
 
-	def step(self, action):
-		return self.env.step(action)
+	def _stack_obs(self, observations):
+		self._set_backend(observations[0])
+		return self.backend.stack(observations)
 
-	def render(self, *args, **kwargs):
-		return self.env.render(*args, **kwargs)
+	def step(self, acts):
+		if self.parallel:
+			[pipe.send(('step', act)) for pipe, act in zip(self.pipes, acts)]
+			step_results = [self._receive(pipe) for pipe in self.pipes]
+		else:
+			step_results = [env.step(act) for env, act in zip(self.envs, acts)]
+
+		obss, rews, terms, truncs, infos = zip(*step_results)
+		keys = set(infos[0].keys())
+		for info in infos[1:]:
+			assert keys == info.keys(), f'{keys} != {info.keys()}'
+
+		infos = {k: [info[k] for info in infos] for k in keys}
+		return self._stack_obs(obss), np.stack(rews), np.stack(terms), np.stack(truncs), infos
+
+	def reset(self, env_ids=None):
+		if env_ids is None:
+			env_ids = range(self.cfg.num_envs)
+
+		if self.parallel:
+			[self.pipes[i].send(('reset',)) for i in env_ids]
+			reset_results = [self._receive(self.pipes[i]) for i in env_ids]
+		else:
+			reset_results = [self.envs[i].reset() for i in env_ids]
+
+		obss, infos = zip(*reset_results)
+		return self._stack_obs(obss)
+
+	def render(self, env_ids=None):
+		if env_ids is None:
+			env_ids = range(self.cfg.num_envs)
+
+		if self.parallel:
+			[self.pipes[i].send(('render',)) for i in env_ids]
+			images = [self._receive(self.pipes[i]) for i in env_ids]
+		else:
+			images = [self.envs[i].render() for i in env_ids]
+
+		return images
+
+	def close(self):
+		if self.parallel:
+			[proc.kill() for proc in self.procs]
+		else:
+			[env.close() for env in self.envs]
