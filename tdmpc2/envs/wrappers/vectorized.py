@@ -148,7 +148,10 @@ class Vectorized:
 		else:
 			reset_results = [self.envs[i].reset() for i in env_ids]
 
-		obss, infos = zip(*reset_results)
+		if isinstance(reset_results[0], tuple):
+			obss, infos = zip(*reset_results)
+		else:
+			obss = reset_results
 		return self._stack_obs(obss)
 
 	def render(self, env_ids=None):

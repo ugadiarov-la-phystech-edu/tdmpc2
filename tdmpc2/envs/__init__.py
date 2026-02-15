@@ -74,8 +74,7 @@ def make_env(cfg, is_eval=False):
 				pass
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
-		assert cfg.num_envs == 1 or cfg.get('obs', 'state') == 'state', \
-			'Vectorized environments only support state observations.'
+
 		env = Vectorized(cfg, fn, is_eval)
 		env = TensorWrapper(env)
 	try: # Dict
