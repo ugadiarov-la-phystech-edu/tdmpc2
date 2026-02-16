@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -133,18 +135,38 @@ def mlp(in_dim, mlp_dims, out_dim, act=None, dropout=0.):
 	return nn.Sequential(*mlp)
 
 
-def conv(in_shape, num_channels, act=None):
+def get_out_size(input_size, kernel_sizes, strides):
+	assert len(kernel_sizes) == len(strides)
+	size = input_size
+	for kernel_size, stride in zip(kernel_sizes, strides):
+		size = math.floor((size - kernel_size) / stride + 1)
+
+	return size
+
+
+def conv(in_shape, num_channels, latent_dim, act=None):
 	"""
 	Basic convolutional encoder for TD-MPC2 with raw image observations.
 	4 layers of convolution with ReLU activations, followed by a linear layer.
 	"""
-	assert in_shape[-1] == 64 # assumes rgb observations to be 64x64
-	layers = [
-		ShiftAug(), PixelPreprocess(),
-		nn.Conv2d(in_shape[0], num_channels, 7, stride=2), nn.ReLU(inplace=False),
-		nn.Conv2d(num_channels, num_channels, 5, stride=2), nn.ReLU(inplace=False),
-		nn.Conv2d(num_channels, num_channels, 3, stride=2), nn.ReLU(inplace=False),
-		nn.Conv2d(num_channels, num_channels, 3, stride=1), nn.Flatten()]
+	kernel_sizes = [7, 5, 3, 3]
+	strides = [2, 2, 2, 1]
+	layers = [ShiftAug(), PixelPreprocess()]
+	size = in_shape[0]
+	for kernel_size, stride in zip(kernel_sizes, strides):
+		layers.append(nn.Conv2d(size, num_channels, kernel_size, stride=stride))
+		layers.append(nn.ReLU(inplace=True))
+		size = num_channels
+
+	out_size = get_out_size(in_shape[-1], kernel_sizes, strides)
+	out_features = out_size * out_size * num_channels
+	if out_features == latent_dim:
+		layers = layers[:-1]
+		layers.append(nn.Flatten())
+	else:
+		layers.append(nn.Flatten())
+		layers.append(nn.Linear(out_features, latent_dim))
+
 	if act:
 		layers.append(act)
 	return nn.Sequential(*layers)
@@ -158,7 +180,7 @@ def enc(cfg, out={}):
 		if k == 'state':
 			out[k] = mlp(cfg.obs_shape[k][0] + cfg.task_dim, max(cfg.num_enc_layers-1, 1)*[cfg.enc_dim], cfg.latent_dim, act=SimNorm(cfg))
 		elif k == 'rgb':
-			out[k] = conv(cfg.obs_shape[k], cfg.num_channels, act=SimNorm(cfg))
+			out[k] = conv(cfg.obs_shape[k], cfg.num_channels, cfg.latent_dim, act=SimNorm(cfg))
 		else:
 			raise NotImplementedError(f"Encoder for observation type {k} not implemented.")
 	return nn.ModuleDict(out)

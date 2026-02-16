@@ -4,6 +4,7 @@ defaults:
 # environment
 task: dog-run
 obs: state
+obs_image_size: 64
 episodic: false
 num_envs: 1
 parallel: True

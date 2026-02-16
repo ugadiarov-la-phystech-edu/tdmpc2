@@ -3,34 +3,42 @@ import warnings
 
 import gymnasium as gym
 
+from envs.utils import InvalidTaskException, MissingDependencyException
 from envs.wrappers.multitask import MultitaskWrapper
 from envs.wrappers.tensor import TensorWrapper
 from envs.wrappers.vectorized import Vectorized
 
 
-def missing_dependencies(task):
-	raise ValueError(f'Missing dependencies for task {task}; install dependencies to use this environment.')
+def missing_dependencies(suite):
+	def _cast_missing_dependencies_exception(*args, **kwargs):
+		raise MissingDependencyException(suite)
+
+	return _cast_missing_dependencies_exception
 
 try:
 	from envs.dmcontrol import make_env as make_dm_control_env
 except:
-	make_dm_control_env = missing_dependencies
+	make_dm_control_env = missing_dependencies('dmcontrol')
 try:
 	from envs.maniskill import make_env as make_maniskill_env
 except:
-	make_maniskill_env = missing_dependencies
+	make_maniskill_env = missing_dependencies('maniskill')
 try:
 	from envs.metaworld import make_env as make_metaworld_env
 except:
-	make_metaworld_env = missing_dependencies
+	make_metaworld_env = missing_dependencies('metaworld')
 try:
 	from envs.myosuite import make_env as make_myosuite_env
 except:
-	make_myosuite_env = missing_dependencies
+	make_myosuite_env = missing_dependencies('myosuite')
 try:
 	from envs.mujoco import make_env as make_mujoco_env
 except:
-	make_mujoco_env = missing_dependencies
+	make_mujoco_env = missing_dependencies('mujoco')
+try:
+	from envs.robosuite_env import make_env as make_robosuite_env
+except:
+	make_robosuite_env = missing_dependencies('robosuite_env')
 
 
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -66,12 +74,15 @@ def make_env(cfg, is_eval=False):
 		env = make_multitask_env(cfg)
 	else:
 		env = None
-		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env, make_mujoco_env]:
+		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env, make_mujoco_env,
+				   make_robosuite_env,]:
 			try:
 				env = fn(cfg)
 				break
-			except ValueError:
-				pass
+			except InvalidTaskException as e:
+				print(e)
+			except MissingDependencyException as e:
+				print(e)
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
 

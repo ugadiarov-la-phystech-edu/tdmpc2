@@ -6,6 +6,10 @@ import torch
 
 from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, fish
 from dm_control import suite
+
+from envs.utils import InvalidTaskException
+from envs.wrappers.pixels import Pixels
+
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom')
 suite.TASKS_BY_DOMAIN = suite._get_tasks_by_domain(suite.ALL_TASKS)
 from dm_control.suite.wrappers import action_scale
@@ -70,35 +74,6 @@ class DMControlWrapper:
 		self.env.close()
 
 
-class Pixels(gym.Wrapper):
-	def __init__(self, env, cfg, num_frames=3, size=64):
-		super().__init__(env)
-		self.cfg = cfg
-		self.env = env
-		self.observation_space = gym.spaces.Box(
-			low=0, high=255, shape=(num_frames*3, size, size), dtype=np.uint8)
-		self._frames = deque([], maxlen=num_frames)
-		self._size = size
-
-	def _get_obs(self, is_reset=False):
-		frame = self.env.render(width=self._size, height=self._size).transpose(2, 0, 1)
-		num_frames = self._frames.maxlen if is_reset else 1
-		for _ in range(num_frames):
-			self._frames.append(frame)
-		return torch.from_numpy(np.concatenate(self._frames))
-
-	def reset(self):
-		self.env.reset()
-		return self._get_obs(is_reset=True)
-
-	def step(self, action):
-		_, reward, done, info = self.env.step(action)
-		return self._get_obs(), reward, done, info
-
-	def close(self):
-		self.env.close()
-
-
 def make_env(cfg):
 	"""
 	Make DMControl environment.
@@ -107,7 +82,7 @@ def make_env(cfg):
 	domain, task = cfg.task.replace('-', '_').split('_', 1)
 	domain = dict(cup='ball_in_cup', pointmass='point_mass').get(domain, domain)
 	if (domain, task) not in suite.ALL_TASKS:
-		raise ValueError('Unknown task:', task)
+		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs in {'state', 'rgb'}, 'This task only supports state and rgb observations.'
 	env = suite.load(domain,
 					 task,

@@ -1,5 +1,7 @@
 import numpy as np
 import gymnasium as gym
+
+from envs.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 
@@ -43,7 +45,7 @@ def make_env(cfg):
 	Make classic/MuJoCo environment.
 	"""
 	if not cfg.task in MUJOCO_TASKS:
-		raise ValueError('Unknown task:', cfg.task)
+		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs == 'state', 'This task only supports state observations.'
 	if cfg.task == 'lunarlander-continuous':
 		env = gym.make(MUJOCO_TASKS[cfg.task], continuous=True, render_mode='rgb_array')

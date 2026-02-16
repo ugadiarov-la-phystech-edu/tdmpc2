@@ -1,5 +1,7 @@
 import gymnasium as gym
 import numpy as np
+
+from envs.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 import mani_skill2.envs
@@ -67,7 +69,7 @@ def make_env(cfg):
 	Make ManiSkill2 environment.
 	"""
 	if cfg.task not in MANISKILL_TASKS:
-		raise ValueError('Unknown task:', cfg.task)
+		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs == 'state', 'This task only supports state observations.'
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	env = gym.make(

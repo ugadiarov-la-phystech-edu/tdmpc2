@@ -1,5 +1,7 @@
 import numpy as np
 import gym
+
+from envs.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE
@@ -43,7 +45,7 @@ def make_env(cfg):
 	"""
 	env_id = cfg.task.split("-", 1)[-1] + "-v2-goal-observable"
 	if not cfg.task.startswith('mw-') or env_id not in ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE:
-		raise ValueError('Unknown task:', cfg.task)
+		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs == 'state', 'This task only supports state observations.'
 	env = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE[env_id](seed=cfg.seed)
 	env = MetaWorldWrapper(env, cfg)
