@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import os
 import datetime
 import re
@@ -123,6 +124,11 @@ class Logger:
 		print_run(cfg)
 		self.project = cfg.get("wandb_project", "none")
 		self.entity = cfg.get("wandb_entity", "none")
+		with open(self._log_dir / "config.json", "w") as f:
+			config = dataclasses.asdict(cfg)
+			config['work_dir'] = str(config['work_dir'])
+			json.dump(config, f, indent=4)
+
 		if not cfg.enable_wandb or self.project == "none" or self.entity == "none":
 			print(colored("Wandb disabled.", "blue", attrs=["bold"]))
 			self._wandb = None
