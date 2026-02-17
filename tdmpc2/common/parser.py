@@ -88,7 +88,7 @@ def parse_cfg(cfg: OmegaConf) -> OmegaConf:
 			raise ValueError(f'{key} {cfg.eval_freq} must be divisible by num_envs {cfg.num_envs}.')
 
 	for key in ('checkpoint',):
-		if key not in cfg:
+		if key not in cfg or cfg[key] in (None, ""):
 			cfg[key] = None
 
 	return cfg_to_dataclass(cfg)
