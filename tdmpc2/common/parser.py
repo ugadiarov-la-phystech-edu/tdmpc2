@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import hydra
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from common import MODEL_SIZE, TASK_SET
 
@@ -21,7 +21,12 @@ def cfg_to_dataclass(cfg, frozen=False):
 	dataclass_name = "Config"
 	dataclass = dataclasses.make_dataclass(dataclass_name, fields, frozen=frozen)
 	def get(self, val, default=None):
-		return getattr(self, val, default)
+		result = getattr(self, val, default)
+		if result == '???':
+			return default
+
+		return result
+
 	dataclass.get = get
 	return dataclass()
 
@@ -87,8 +92,9 @@ def parse_cfg(cfg: OmegaConf) -> OmegaConf:
 		if cfg.get(key) % cfg.num_envs != 0:
 			raise ValueError(f'{key} {cfg.eval_freq} must be divisible by num_envs {cfg.num_envs}.')
 
-	for key in ('checkpoint',):
-		if key not in cfg or cfg[key] in (None, ""):
-			cfg[key] = None
+	for key in list(cfg):
+		if key in cfg and cfg[key] in (None, ''):
+			with open_dict(cfg):
+				del cfg[key]
 
 	return cfg_to_dataclass(cfg)

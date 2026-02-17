@@ -16,7 +16,6 @@ eval_freq: 50000
 
 # checkpoint
 checkpoint: ???
-checkpoint_buffer: ???
 
 # training
 steps: 10_000_000
