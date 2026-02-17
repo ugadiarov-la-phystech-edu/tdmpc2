@@ -50,8 +50,11 @@ class TensorWrapper(gym.Wrapper):
 		terminated = torch.tensor(terminated)
 		truncated = torch.tensor(truncated)
 		done = terminated | truncated
-		if 'success' not in info:
+		if 'success' in info:
+			info['success'] = torch.tensor(info['success'], dtype=torch.float32)
+		else:
 			info['success'] = torch.zeros_like(reward)
+
 		info['terminated'] = terminated.float()
 		info['truncated'] = truncated.float()
 		return self._obs_to_tensor(obs), reward, done, info

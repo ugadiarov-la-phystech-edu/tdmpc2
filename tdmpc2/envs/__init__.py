@@ -39,6 +39,10 @@ try:
 	from envs.robosuite_env import make_env as make_robosuite_env
 except Exception as e:
 	make_robosuite_env = missing_dependencies('robosuite_env', e)
+try:
+	from envs.maniskill3 import make_env as make_maniskill3_env
+except Exception as e:
+	make_maniskill3_env = missing_dependencies('maniskill3', e)
 
 
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -75,7 +79,7 @@ def make_env(cfg, is_eval=False):
 	else:
 		env = None
 		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env, make_mujoco_env,
-				   make_robosuite_env,]:
+				   make_robosuite_env, make_maniskill3_env]:
 			try:
 				env = fn(cfg)
 				break
