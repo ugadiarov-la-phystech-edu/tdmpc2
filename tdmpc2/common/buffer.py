@@ -1,3 +1,5 @@
+import os
+
 import torch
 from tensordict.tensordict import TensorDict
 from torchrl.data.replay_buffers import ReplayBuffer, LazyTensorStorage
@@ -12,7 +14,7 @@ class Buffer():
 
 	def __init__(self, cfg):
 		self.cfg = cfg
-		self._device = torch.device('cuda:0')
+		self._device = torch.device(self.cfg.device)
 		self._capacity = min(cfg.buffer_size, cfg.steps)
 		self._sampler = SliceSampler(
 			num_slices=self.cfg.batch_size,
@@ -24,6 +26,7 @@ class Buffer():
 		)
 		self._batch_size = cfg.batch_size * (cfg.horizon+1)
 		self._num_eps = 0
+		self._buffer = None
 
 	@property
 	def capacity(self):
@@ -34,6 +37,10 @@ class Buffer():
 	def num_eps(self):
 		"""Return the number of episodes in the buffer."""
 		return self._num_eps
+
+	@num_eps.setter
+	def num_eps(self, num_eps):
+		self._num_eps = num_eps
 
 	def _reserve_buffer(self, storage):
 		"""
@@ -47,24 +54,33 @@ class Buffer():
 			batch_size=self._batch_size,
 		)
 
-	def _init(self, tds):
+	def init(self, tds):
 		"""Initialize the replay buffer. Use the first episode to estimate storage requirements."""
+		assert self._buffer is None, "Buffer is already initialized."
 		print(f'Buffer capacity: {self._capacity:,}')
-		mem_free, _ = torch.cuda.mem_get_info()
-		bytes_per_step = sum([
-				(v.numel()*v.element_size() if not isinstance(v, TensorDict) \
-				else sum([x.numel()*x.element_size() for x in v.values()])) \
-			for v in tds.values()
-		]) / len(tds)
-		total_bytes = bytes_per_step*self._capacity
-		print(f'Storage required: {total_bytes/1e9:.2f} GB')
-		# Heuristic: decide whether to use CUDA or CPU memory
-		storage_device = 'cuda:0' if 2.5*total_bytes < mem_free else 'cpu'
+		storage_device = self.cfg.get('buffer_storage_device', None)
+		if storage_device is None:
+			mem_free, _ = torch.cuda.mem_get_info(self._device)
+			bytes_per_step = sum([
+				(v.numel() * v.element_size() if not isinstance(v, TensorDict) \
+					 else sum([x.numel() * x.element_size() for x in v.values()])) \
+				for v in tds.values()
+			]) / len(tds)
+			total_bytes = bytes_per_step * self._capacity
+			print(f'Storage required: {total_bytes / 1e9:.2f} GB')
+			# Heuristic: decide whether to use CUDA or CPU memory
+			storage_device = self._device if 2.5 * total_bytes < mem_free else 'cpu'
+
 		print(f'Using {storage_device.upper()} memory for storage.')
-		self._storage_device = torch.device(storage_device)
-		return self._reserve_buffer(
-			LazyTensorStorage(self._capacity, device=self._storage_device)
+		buffer = self._reserve_buffer(
+			LazyTensorStorage(self._capacity, device=torch.device(storage_device))
 		)
+		if self.cfg.get('checkpoint', None):
+			path = os.path.join(self.cfg.checkpoint, "checkpoint.buf")
+			print(f'Loading buffer: {path}')
+			buffer.loads(path)
+
+		self._buffer = buffer
 
 	def load(self, td):
 		"""
@@ -84,8 +100,6 @@ class Buffer():
 	def add(self, td):
 		"""Add an episode to the buffer."""
 		td['episode'] = torch.full_like(td['reward'], self._num_eps, dtype=torch.int64)
-		if self._num_eps == 0:
-			self._buffer = self._init(td)
 		self._buffer.extend(td)
 		self._num_eps += 1
 		return self._num_eps
@@ -113,3 +127,6 @@ class Buffer():
 		"""Sample a batch of subsequences from the buffer."""
 		td = self._buffer.sample().view(-1, self.cfg.horizon+1).permute(1, 0)
 		return self._prepare_batch(td)
+
+	def dumps(self, path):
+		self._buffer.dumps(path)

@@ -80,5 +80,15 @@ def parse_cfg(cfg: OmegaConf) -> OmegaConf:
 	# Ensure that eval_episodes is divisible by num_envs and is at least 1*num_envs
 	cfg.eval_episodes = max(cfg.eval_episodes, cfg.num_envs)
 	cfg.eval_episodes = cfg.eval_episodes - (cfg.eval_episodes % cfg.num_envs)
+	if not cfg.get("save_freq", None):
+		cfg.save_freq = cfg.eval_freq
+
+	for key in ('eval_freq', 'save_freq'):
+		if cfg.get(key) % cfg.num_envs != 0:
+			raise ValueError(f'{key} {cfg.eval_freq} must be divisible by num_envs {cfg.num_envs}.')
+
+	for key in ('checkpoint',):
+		if key not in cfg:
+			cfg[key] = None
 
 	return cfg_to_dataclass(cfg)

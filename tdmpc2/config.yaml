@@ -8,11 +8,15 @@ obs_image_size: 64
 episodic: false
 num_envs: 1
 parallel: True
+device: cuda
 
 # evaluation
-checkpoint: ???
 eval_episodes: 10
 eval_freq: 50000
+
+# checkpoint
+checkpoint: ???
+checkpoint_buffer: ???
 
 # training
 steps: 10_000_000
@@ -30,9 +34,12 @@ tau: 0.01
 discount_denom: 5
 discount_min: 0.95
 discount_max: 0.995
-buffer_size: 1_000_000
 exp_name: default
 data_dir: ???
+
+# buffer
+buffer_size: 1_000_000
+buffer_storage_device: ???
 
 # planning
 mpc: true
@@ -82,6 +89,7 @@ num_videos: 1
 fps: 10
 save_agent: true
 seed: 1
+save_freq: ???
 
 # convenience
 work_dir: ???

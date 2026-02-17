@@ -1,3 +1,4 @@
+import os
 from time import time
 
 import torch
@@ -13,15 +14,26 @@ class OnlineTrainer(Trainer):
 		self._step = 0
 		self._ep_idx = 0
 		self._start_time = time()
+		self._resume = False
+		if self.cfg.get('checkpoint', None):
+			path = os.path.join(self.cfg.checkpoint, 'checkpoint.pt')
+			print(f'Loading checkpoint: {path}')
+			state_dict = torch.load(path)
+			self.agent.load(state_dict)
+			self._step = state_dict['step']
+			self._ep_idx = state_dict['episode']
+			self.buffer.num_eps = state_dict['episode']
+			self._start_time = time() - state_dict['total_time']
+			self._resume = True
 
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
-		elapsed_time = time() - self._start_time
+		total_time = time() - self._start_time
 		return dict(
 			step=self._step,
 			episode=self._ep_idx,
-			elapsed_time=elapsed_time,
-			steps_per_second=self._step / elapsed_time
+			total_time=total_time,
+			steps_per_second=self._step / total_time
 		)
 
 	def eval(self):
@@ -115,10 +127,13 @@ class OnlineTrainer(Trainer):
 		first_step = True
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
-			if self._step % self.cfg.eval_freq == 0:
+			if not (self._resume and first_step) and self.cfg.eval_freq > 0 and self._step % self.cfg.eval_freq == 0:
 				eval_metrics = self.eval()
 				eval_metrics.update(self.common_metrics())
 				self.logger.log(eval_metrics, 'eval')
+
+			if not first_step and self.cfg.save_freq > 0 and self._step % self.cfg.save_freq == 0:
+				self.logger.save_agent(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)
 
 			# Reset environment
 			if done.any().item():
@@ -126,7 +141,6 @@ class OnlineTrainer(Trainer):
 				reset_obs = self.env.reset(env_ids=env_ids)
 				if first_step:
 					assert done.all().item()
-					first_step = False
 					obs = reset_obs
 				else:
 					if info['terminated'].any().item() and not self.cfg.episodic:
@@ -158,6 +172,10 @@ class OnlineTrainer(Trainer):
 				for env_id in env_ids:
 					self._tds[env_id] = [self.to_td(obs[env_id])]
 
+				if first_step:
+					first_step = False
+					self.buffer.init(self._tds[0])
+
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
 				action = self.agent.act(obs, t0=done.to(self.agent.device))
@@ -183,4 +201,4 @@ class OnlineTrainer(Trainer):
 
 			self._step += self.cfg.num_envs
 
-		self.logger.finish(self.agent)
+		self.logger.finish(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)

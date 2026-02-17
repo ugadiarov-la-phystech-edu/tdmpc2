@@ -156,10 +156,13 @@ class Logger:
 	def model_dir(self):
 		return self._model_dir
 
-	def save_agent(self, agent=None, identifier='final'):
+	def save_agent(self, agent=None, statistics={}, identifier='final', buffer=None):
 		if self._save_agent and agent:
+			print(f'Saving agent: {self._model_dir}')
 			fp = self._model_dir / f'{str(identifier)}.pt'
-			agent.save(fp)
+			agent.save(statistics, fp)
+			buffer_path = self._model_dir / f'{str(identifier)}.buf'
+			buffer.dumps(buffer_path)
 			if self._wandb:
 				artifact = self._wandb.Artifact(
 					self._group + '-' + str(self._seed) + '-' + str(identifier),
@@ -168,9 +171,9 @@ class Logger:
 				artifact.add_file(fp)
 				self._wandb.log_artifact(artifact)
 
-	def finish(self, agent=None):
+	def finish(self, agent=None, statistics={}, identifier='final', buffer=None):
 		try:
-			self.save_agent(agent)
+			self.save_agent(agent, statistics, identifier, buffer)
 		except Exception as e:
 			print(colored(f"Failed to save model: {e}", "red"))
 		if self._wandb:

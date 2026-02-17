@@ -58,8 +58,6 @@ def train(cfg: dict):
 		buffer=Buffer(cfg),
 		logger=Logger(cfg),
 	)
-	if cfg.eval_freq % cfg.num_envs != 0:
-		raise ValueError(f'eval_freq {cfg.eval_freq} must be divisible by num_envs {cfg.num_envs}.')
 
 	trainer.train()
 	print('\nTraining completed successfully')
