@@ -20,6 +20,8 @@ CONSOLE_FORMAT = [
 	("episode_reward", "R", "float"),
 	("episode_success", "S", "float"),
 	("elapsed_time", "T", "time"),
+	("steps_per_second", "SPS", "float"),
+	("mean_steps_per_second", "mSPS", "float"),
 ]
 
 CAT_TO_COLOR = {

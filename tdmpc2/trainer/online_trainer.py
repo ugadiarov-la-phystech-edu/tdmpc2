@@ -26,14 +26,22 @@ class OnlineTrainer(Trainer):
 			self._start_time = time() - state_dict['total_time']
 			self._resume = True
 
+		self._prev_step = self._step
+		self._prev_time = time()
+
 	def common_metrics(self):
 		"""Return a dictionary of current metrics."""
-		total_time = time() - self._start_time
+		tm = time()
+		steps_per_second = (self._step - self._prev_step) / (tm - self._prev_time)
+		self._prev_step = self._step
+		self._prev_time = tm
+		total_time = tm - self._start_time
 		return dict(
 			step=self._step,
 			episode=self._ep_idx,
 			total_time=total_time,
-			steps_per_second=self._step / total_time
+			steps_per_second=steps_per_second,
+			mean_steps_per_second=self._step / total_time
 		)
 
 	def eval(self):
