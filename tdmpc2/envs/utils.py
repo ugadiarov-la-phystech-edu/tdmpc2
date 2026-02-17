@@ -6,6 +6,6 @@ class InvalidTaskException(Exception):
 
 
 class MissingDependencyException(Exception):
-	def __init__(self, suite):
+	def __init__(self, suite, exception):
 		self.suite = suite
-		super().__init__(f'Missing dependencies for suite {self.suite}; install dependencies to use this environment.')
+		super().__init__(f'Missing dependencies for suite {self.suite}; install dependencies to use this environment. Error: {exception}')

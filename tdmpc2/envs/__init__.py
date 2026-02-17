@@ -9,36 +9,36 @@ from envs.wrappers.tensor import TensorWrapper
 from envs.wrappers.vectorized import Vectorized
 
 
-def missing_dependencies(suite):
+def missing_dependencies(suite, exception):
 	def _cast_missing_dependencies_exception(*args, **kwargs):
-		raise MissingDependencyException(suite)
+		raise MissingDependencyException(suite, exception)
 
 	return _cast_missing_dependencies_exception
 
 try:
 	from envs.dmcontrol import make_env as make_dm_control_env
-except:
-	make_dm_control_env = missing_dependencies('dmcontrol')
+except Exception as e:
+	make_dm_control_env = missing_dependencies('dmcontrol', e)
 try:
 	from envs.maniskill import make_env as make_maniskill_env
-except:
-	make_maniskill_env = missing_dependencies('maniskill')
+except Exception as e:
+	make_maniskill_env = missing_dependencies('maniskill', e)
 try:
 	from envs.metaworld import make_env as make_metaworld_env
-except:
-	make_metaworld_env = missing_dependencies('metaworld')
+except Exception as e:
+	make_metaworld_env = missing_dependencies('metaworld', e)
 try:
 	from envs.myosuite import make_env as make_myosuite_env
-except:
-	make_myosuite_env = missing_dependencies('myosuite')
+except Exception as e:
+	make_myosuite_env = missing_dependencies('myosuite', e)
 try:
 	from envs.mujoco import make_env as make_mujoco_env
-except:
-	make_mujoco_env = missing_dependencies('mujoco')
+except Exception as e:
+	make_mujoco_env = missing_dependencies('mujoco', e)
 try:
 	from envs.robosuite_env import make_env as make_robosuite_env
-except:
-	make_robosuite_env = missing_dependencies('robosuite_env')
+except Exception as e:
+	make_robosuite_env = missing_dependencies('robosuite_env', e)
 
 
 warnings.filterwarnings('ignore', category=DeprecationWarning)
