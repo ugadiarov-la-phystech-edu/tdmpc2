@@ -1,8 +1,11 @@
 import os
+from collections import defaultdict
 from time import time
 
 import torch
 from tensordict.tensordict import TensorDict
+
+from common.utils import stop_watch
 from trainer.base import Trainer
 
 
@@ -131,6 +134,7 @@ class OnlineTrainer(Trainer):
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done = {}, torch.ones(self.cfg.num_envs, dtype=torch.bool)
+		profiling_statistics = defaultdict(list)
 		self._tds = [None for _ in range(self.cfg.num_envs)]
 		first_step = True
 		while self._step <= self.cfg.steps:
@@ -161,7 +165,8 @@ class OnlineTrainer(Trainer):
 						episode_successes.append(info['success'][env_id].nanmean().item())
 						episode_lengths.append(len(self._tds[env_id]))
 						episode_terminations.append(info['terminated'][env_id].nanmean().item())
-						self._ep_idx = self.buffer.add(tds)
+						self._ep_idx, buffer_add_time = stop_watch(self.buffer.add, tds)
+						profiling_statistics['buffer_add_time'].append(buffer_add_time)
 
 					train_metrics.update(
 						episode_rewards=episode_rewards,
@@ -174,7 +179,10 @@ class OnlineTrainer(Trainer):
 						episode_terminated=torch.tensor(episode_terminations, dtype=torch.float32).mean().item(),
 					)
 					train_metrics.update(self.common_metrics())
+					train_metrics.update({k: sum(v) / len(v) for k, v in profiling_statistics.items()})
 					self.logger.log(train_metrics, 'train')
+					train_metrics = {}
+					profiling_statistics = defaultdict(list)
 					obs[done] = reset_obs
 
 				for env_id in env_ids:
@@ -186,10 +194,12 @@ class OnlineTrainer(Trainer):
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
-				action = self.agent.act(obs, t0=done.to(self.agent.device))
+				action, act_time = stop_watch(self.agent.act, obs, t0=done.to(self.agent.device))
+				profiling_statistics['act_time'].append(act_time)
 			else:
 				action = self.env.rand_act()
-			obs, reward, done, info = self.env.step(action)
+			(obs, reward, done, info), step_time = stop_watch(self.env.step, action)
+			profiling_statistics['env_step_time'].append(step_time)
 			for env_id in range(self.cfg.num_envs):
 				self._tds[env_id].append(self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id]))
 
@@ -201,8 +211,11 @@ class OnlineTrainer(Trainer):
 				else:
 					num_updates = max(1, int(self.cfg.num_envs / self.cfg.steps_per_update))
 				for _ in range(num_updates):
-					_train_metrics = self.agent.update(self.buffer)
+					_train_metrics, update_time = stop_watch(self.agent.update, self.buffer)
 					_train_metrics = {k: v.item() for k, v in _train_metrics.items()}
+					buffer_sample_time = _train_metrics.pop('buffer_sample_time')
+					profiling_statistics['update_time'].append(update_time - buffer_sample_time)
+					profiling_statistics['buffer_sample_time'].append(buffer_sample_time)
 				train_metrics.update(_train_metrics)
 				if self._step == self.cfg.seed_steps:
 					print('Pretraining complete.')

@@ -1,11 +1,8 @@
 import gymnasium as gym
 import numpy as np
 
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
-
-import mani_skill2.envs
-
 
 MANISKILL_TASKS = {
 	'lift-cube': dict(

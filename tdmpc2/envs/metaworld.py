@@ -1,7 +1,7 @@
 import numpy as np
 import gym
 
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 from metaworld.envs import ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE

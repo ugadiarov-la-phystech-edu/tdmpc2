@@ -1,13 +1,12 @@
-from collections import defaultdict, deque
+from collections import defaultdict
 
 import gymnasium as gym
 import numpy as np
 import torch
 
-from envs.tasks import cheetah, walker, hopper, reacher, ball_in_cup, pendulum, fish
 from dm_control import suite
 
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.pixels import Pixels
 
 suite.ALL_TASKS = suite.ALL_TASKS + suite._get_tasks('custom')

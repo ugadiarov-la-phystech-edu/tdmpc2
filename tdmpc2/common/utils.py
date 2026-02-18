@@ -1,3 +1,6 @@
+import time
+
+
 class InvalidTaskException(Exception):
 	def __init__(self, task, suite):
 		self.task = task
@@ -9,3 +12,9 @@ class MissingDependencyException(Exception):
 	def __init__(self, suite, exception):
 		self.suite = suite
 		super().__init__(f'Missing dependencies for suite {self.suite}; install dependencies to use this environment. Error: {exception}')
+
+
+def stop_watch(function, *args, **kwargs):
+	start = time.perf_counter()
+	result = function(*args, **kwargs)
+	return result, time.perf_counter() - start

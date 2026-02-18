@@ -1,7 +1,6 @@
-import numpy as np
 import gymnasium as gym
 
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 

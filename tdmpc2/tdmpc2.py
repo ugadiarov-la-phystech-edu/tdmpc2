@@ -3,6 +3,7 @@ import torch.nn.functional as F
 
 from common import math
 from common.scale import RunningScale
+from common.utils import stop_watch
 from common.world_model import WorldModel
 from common.layers import api_model_conversion
 from tensordict import TensorDict
@@ -360,9 +361,11 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			dict: Dictionary of training statistics.
 		"""
-		obs, action, reward, terminated, task = buffer.sample()
+		(obs, action, reward, terminated, task), buffer_sample_time = stop_watch(buffer.sample)
 		kwargs = {}
 		if task is not None:
 			kwargs["task"] = task
 		torch.compiler.cudagraph_mark_step_begin()
-		return self._update(obs, action, reward, terminated, **kwargs)
+		metrics = self._update(obs, action, reward, terminated, **kwargs)
+		metrics['buffer_sample_time'] = torch.tensor(buffer_sample_time)
+		return metrics

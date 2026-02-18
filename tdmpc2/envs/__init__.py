@@ -3,7 +3,7 @@ import warnings
 
 import gymnasium as gym
 
-from envs.utils import InvalidTaskException, MissingDependencyException
+from common.utils import InvalidTaskException, MissingDependencyException
 from envs.wrappers.multitask import MultitaskWrapper
 from envs.wrappers.tensor import TensorWrapper
 from envs.wrappers.vectorized import Vectorized

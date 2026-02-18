@@ -1,7 +1,6 @@
-import numpy as np
 import gymnasium as gym
 
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 
@@ -51,7 +50,6 @@ def make_env(cfg):
 	if not cfg.task in MYOSUITE_TASKS:
 		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs == 'state', 'This task only supports state observations.'
-	import myosuite
 	from myosuite.utils import gym as gym_utils
 	env = gym_utils.make(MYOSUITE_TASKS[cfg.task])
 	env = MyoSuiteWrapper(env, cfg)

@@ -8,7 +8,7 @@ from robosuite import load_controller_config
 from robosuite.utils.placement_samplers import UniformRandomSampler, ObjectPositionSampler
 
 from envs.wrappers.pixels import Pixels
-from envs.utils import InvalidTaskException
+from common.utils import InvalidTaskException
 from envs.wrappers.timeout import Timeout
 
 ROBOSUITE_TASKS = {
