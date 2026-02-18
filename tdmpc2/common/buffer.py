@@ -4,11 +4,39 @@ import torch
 from tensordict.tensordict import TensorDict
 from torchrl.data.replay_buffers import ReplayBuffer, LazyTensorStorage, LazyMemmapStorage
 from torchrl.data.replay_buffers.samplers import SliceSampler
+from torchrl.envs.transforms import Transform
 
 from common.utils import make_dir
 
 
 STORAGE = {'lazy_tensor': LazyTensorStorage, 'lazy_memmap': LazyMemmapStorage}
+
+
+class BatchTransform(Transform):
+	def __init__(self, device):
+		super(BatchTransform, self).__init__()
+		self._device = device
+
+	def forward(self, td: TensorDict) -> TensorDict:
+		"""
+		Prepare a sampled batch for training (post-processing).
+		Expects `td` to be a TensorDict with batch size TxB.
+		"""
+		td = td.select("obs", "action", "reward", "terminated", "task", strict=False).to(self._device, non_blocking=True)
+		obs = td.get('obs').contiguous()
+		action = td.get('action').contiguous()
+		reward = td.get('reward').unsqueeze(-1).contiguous()
+		terminated = td.get('terminated', None)
+		if terminated is not None:
+			terminated = td.get('terminated').unsqueeze(-1).contiguous()
+		else:
+			terminated = torch.zeros_like(reward)
+		task = td.get('task', None)
+		if task is not None:
+			task = task[0].contiguous()
+		return TensorDict(
+			obs=obs, action=action, reward=reward, terminated=terminated, task=task, batch_size=td.batch_size
+		)
 
 
 class Buffer():
@@ -61,6 +89,7 @@ class Buffer():
 			pin_memory=False,
 			prefetch=self.cfg.num_envs,
 			batch_size=self._batch_size,
+			transform=BatchTransform(self._device),
 		)
 
 	def init(self, tds):
@@ -119,23 +148,7 @@ class Buffer():
 		return self._num_eps
 
 	def _prepare_batch(self, td):
-		"""
-		Prepare a sampled batch for training (post-processing).
-		Expects `td` to be a TensorDict with batch size TxB.
-		"""
-		td = td.select("obs", "action", "reward", "terminated", "task", strict=False).to(self._device, non_blocking=True)
-		obs = td.get('obs').contiguous()
-		action = td.get('action')[1:].contiguous()
-		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
-		terminated = td.get('terminated', None)
-		if terminated is not None:
-			terminated = td.get('terminated')[1:].unsqueeze(-1).contiguous()
-		else:
-			terminated = torch.zeros_like(reward)
-		task = td.get('task', None)
-		if task is not None:
-			task = task[0].contiguous()
-		return obs, action, reward, terminated, task
+		return td.get('obs'), td.get('action')[1:], td.get('reward')[1:], td.get('terminated')[1:], td.get('task')
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
