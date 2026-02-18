@@ -1,6 +1,7 @@
 import numpy as np
 from PIL import Image
 
+from common.utils import InvalidTaskException
 from envs.wrappers.pixels import Pixels
 from envs.wrappers.timeout import Timeout
 
@@ -74,7 +75,7 @@ def make_env(cfg):
 	Make ManiSkill3 environment.
 	"""
 	if cfg.task not in MANISKILL_TASKS:
-		raise ValueError('Unknown task:', cfg.task)
+		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs in ('rgb', 'slots',), 'This task supports only image-based and slot-based observations.'
 	task_cfg = MANISKILL_TASKS[cfg.task]
 	env = gym.make(
