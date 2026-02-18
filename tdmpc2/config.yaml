@@ -39,6 +39,9 @@ data_dir: ???
 # buffer
 buffer_size: 1_000_000
 buffer_storage_device: ???
+buffer_dir: ???
+buffer_storage_type: lazy_memmap
+
 
 # planning
 mpc: true

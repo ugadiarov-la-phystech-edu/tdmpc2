@@ -11,7 +11,7 @@ import pandas as pd
 from termcolor import colored
 
 from common import TASK_SET
-
+from common.utils import make_dir
 
 CONSOLE_FORMAT = [
 	("iteration", "I", "int"),
@@ -29,15 +29,6 @@ CAT_TO_COLOR = {
 	"train": "blue",
 	"eval": "green",
 }
-
-
-def make_dir(dir_path):
-	"""Create directory if it does not already exist."""
-	try:
-		os.makedirs(dir_path)
-	except OSError:
-		pass
-	return dir_path
 
 
 def print_run(cfg):
@@ -128,7 +119,12 @@ class Logger:
 		self.entity = cfg.get("wandb_entity", "none")
 		with open(self._log_dir / "config.json", "w") as f:
 			config = dataclasses.asdict(cfg)
-			config['work_dir'] = str(config['work_dir'])
+			for key in config.keys():
+				try:
+					json.dumps(config[key])
+				except TypeError:
+					config[key] = str(config[key])
+
 			json.dump(config, f, indent=4)
 
 		if not cfg.enable_wandb or self.project == "none" or self.entity == "none":
@@ -169,8 +165,7 @@ class Logger:
 			print(f'Saving agent: {self._model_dir}')
 			fp = self._model_dir / f'{str(identifier)}.pt'
 			agent.save(statistics, fp)
-			buffer_path = self._model_dir / f'{str(identifier)}.buf'
-			buffer.dumps(buffer_path)
+			buffer.dumps()
 			if self._wandb:
 				artifact = self._wandb.Artifact(
 					self._group + '-' + str(self._seed) + '-' + str(identifier),

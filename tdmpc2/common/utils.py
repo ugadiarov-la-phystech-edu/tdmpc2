@@ -1,3 +1,4 @@
+import os
 import time
 
 
@@ -18,3 +19,12 @@ def stop_watch(function, *args, **kwargs):
 	start = time.perf_counter()
 	result = function(*args, **kwargs)
 	return result, time.perf_counter() - start
+
+
+def make_dir(dir_path):
+	"""Create directory if it does not already exist."""
+	try:
+		os.makedirs(dir_path)
+	except OSError:
+		pass
+	return dir_path
