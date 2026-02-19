@@ -142,7 +142,7 @@ class OnlineTrainer(Trainer):
 			if not (self._resume and first_step) and self.cfg.eval_freq > 0 and self._step % self.cfg.eval_freq == 0:
 				eval_metrics = self.eval()
 				eval_metrics.update(self.common_metrics())
-				self.logger.log(eval_metrics, 'eval')
+				self.logger.log(eval_metrics, 'eval', flush=True)
 
 			if not first_step and self.cfg.save_freq > 0 and self._step % self.cfg.save_freq == 0:
 				self.logger.save_agent(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)

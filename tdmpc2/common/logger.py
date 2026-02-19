@@ -3,6 +3,7 @@ import json
 import os
 import datetime
 import re
+import time
 
 import jsonlines
 from moviepy.editor import ImageSequenceClip
@@ -109,6 +110,9 @@ class Logger:
 		self._save_csv = cfg.save_csv
 		self._save_jsonlines = cfg.save_jsonlines
 		self._metrics_jsonl_path = self._log_dir / "metrics.jsonl"
+		self._last_flushed_time = time.time()
+		self._flush_every_seconds = cfg.flush_every_seconds
+		self._metrics_history = []
 		self._save_agent = cfg.save_agent
 		self._group = cfg_to_group(cfg)
 		self._seed = cfg.seed
@@ -231,7 +235,7 @@ class Logger:
 			print(colored(f'  {"metaworld":<22}\tR: {metaworld_reward:.01f}', 'yellow', attrs=['bold']))
 			print(colored(f'  {"metaworld":<22}\tS: {metaworld_success:.02f}', 'yellow', attrs=['bold']))
 
-	def log(self, d, category="train"):
+	def log(self, d, category="train", flush=False):
 		assert category in CAT_TO_COLOR.keys(), f"invalid category: {category}"
 		if category in {"train", "eval"}:
 			xkey = "step"
@@ -245,8 +249,14 @@ class Logger:
 		if self._wandb:
 			self._wandb.log(_d, step=d[xkey])
 		if self._save_jsonlines:
-			with jsonlines.open(self._metrics_jsonl_path, mode='a') as writer:
-				writer.write(_d)
+			self._metrics_history.append(_d)
+			t = time.time()
+			if flush or t >= self._last_flushed_time + self._flush_every_seconds:
+				with jsonlines.open(self._metrics_jsonl_path, mode='a') as writer:
+					writer.write_all(self._metrics_history)
+
+				self._last_flushed_time = t
+				self._metrics_history = []
 
 		if category == "eval" and self._save_csv:
 			keys = ["step", "episode_reward"]
