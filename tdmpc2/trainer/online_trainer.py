@@ -155,7 +155,7 @@ class OnlineTrainer(Trainer):
 					assert done.all().item()
 					obs = reset_obs
 				else:
-					if info['terminated'].any().item() and not self.cfg.episodic:
+					if self.cfg.check_termination and not self.cfg.episodic and info['terminated'].any().item():
 						raise ValueError('Termination detected but you are not in episodic mode. ' \
 						'Set `episodic=true` to enable support for terminations.')
 					episode_rewards, episode_successes, episode_lengths, episode_terminations = [], [], [], []
@@ -165,8 +165,10 @@ class OnlineTrainer(Trainer):
 						episode_successes.append(info['success'][env_id].nanmean().item())
 						episode_lengths.append(len(self._tds[env_id]))
 						episode_terminations.append(info['terminated'][env_id].nanmean().item())
-						self._ep_idx, buffer_add_time = stop_watch(self.buffer.add, tds)
-						profiling_statistics['buffer_add_time'].append(buffer_add_time)
+						# Do not add too short trajectories
+						if len(tds) > self.cfg.horizon:
+							self._ep_idx, buffer_add_time = stop_watch(self.buffer.add, tds)
+							profiling_statistics['buffer_add_time'].append(buffer_add_time)
 
 					train_metrics.update(
 						episode_rewards=episode_rewards,

@@ -43,6 +43,10 @@ try:
 	from envs.maniskill3 import make_env as make_maniskill3_env
 except Exception as e:
 	make_maniskill3_env = missing_dependencies('maniskill3', e)
+try:
+	from envs.cw_envs.target import make_env as make_causalworld_env
+except Exception as e:
+	make_causalworld_env = missing_dependencies('causalworld', e)
 
 
 warnings.filterwarnings('ignore', category=DeprecationWarning)
@@ -79,7 +83,7 @@ def make_env(cfg, is_eval=False):
 	else:
 		env = None
 		for fn in [make_dm_control_env, make_maniskill_env, make_metaworld_env, make_myosuite_env, make_mujoco_env,
-				   make_robosuite_env, make_maniskill3_env]:
+				   make_robosuite_env, make_maniskill3_env, make_causalworld_env]:
 			try:
 				env = fn(cfg)
 				break

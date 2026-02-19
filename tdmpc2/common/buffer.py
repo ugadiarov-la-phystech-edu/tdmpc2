@@ -1,5 +1,3 @@
-import os
-
 import torch
 from tensordict.tensordict import TensorDict
 from torchrl.data.replay_buffers import ReplayBuffer, LazyTensorStorage, LazyMemmapStorage
@@ -62,6 +60,7 @@ class Buffer():
 		self._buffer = None
 		self._buffer_dir = make_dir(cfg.buffer_dir)
 		self._buffer_path = self._buffer_dir / 'checkpoint.buf'
+		self._buffer_state_dict_path = self._buffer_dir / 'replay_buffer.pt'
 		if self.cfg.buffer_storage_type not in STORAGE:
 			raise ValueError(f'Unsupported storage type: {self.cfg.buffer_storage_type}')
 
@@ -110,18 +109,21 @@ class Buffer():
 			storage_device = self._device if 2.5 * total_bytes < mem_free else 'cpu'
 
 		print(f'Using {storage_device.upper()} memory for storage.')
-		if self._buffer_path.exists():
-			print('Loading buffer from {}'.format(self._buffer_path), flush=True)
-
 		cls = STORAGE[self.cfg.buffer_storage_type]
 		kwargs = dict(max_size=self._capacity, device=torch.device(storage_device))
 		if self.cfg.buffer_storage_type == 'lazy_memmap':
 			kwargs.update(dict(existsok=True, scratch_dir=self._buffer_path))
 
+		if self._buffer_path.exists():
+			print(f'Loading buffer data from from {self._buffer_path}', flush=True)
+
 		storage = cls(**kwargs)
 		buffer = self._reserve_buffer(storage)
 		if self.cfg.buffer_storage_type == 'lazy_tensor' and self._buffer_path.exists():
 			buffer.loads(self._buffer_path)
+		elif self.cfg.buffer_storage_type == 'lazy_memmap' and self._buffer_state_dict_path.exists():
+			print(f'Loading buffer state dict from from {self._buffer_state_dict_path}', flush=True)
+			buffer.load_state_dict(torch.load(self._buffer_state_dict_path, weights_only=False))
 
 		self._buffer = buffer
 
@@ -148,7 +150,8 @@ class Buffer():
 		return self._num_eps
 
 	def _prepare_batch(self, td):
-		return td.get('obs'), td.get('action')[1:], td.get('reward')[1:], td.get('terminated')[1:], td.get('task')
+		d = td.to_dict()
+		return d.get('obs'), d.get('action')[1:], d.get('reward')[1:], d.get('terminated')[1:], d.get('task')
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""
@@ -159,4 +162,4 @@ class Buffer():
 		if self.cfg.buffer_storage_type == 'lazy_tensor':
 			self._buffer.dumps(self._buffer_path)
 		else:
-			torch.save(self._buffer.state_dict(), self._buffer_dir / 'replay_buffer.pt')
+			torch.save(self._buffer.state_dict(), self._buffer_state_dict_path)
