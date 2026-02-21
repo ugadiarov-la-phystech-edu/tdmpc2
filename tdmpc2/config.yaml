@@ -88,7 +88,8 @@ flush_every_seconds: 60
 log_every_pretraining: 10
 
 # misc
-compile: true
+compile_plan: true
+compile_update: false
 save_video: true
 num_videos: 1
 fps: 10

@@ -42,7 +42,7 @@ class TDMPC2(torch.nn.Module):
 		self.register_buffer('_prev_mean_train',
 							 torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
 		self.register_buffer('_prev_mean_eval', self._prev_mean_train.clone())
-		if cfg.compile:
+		if cfg.compile_update:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
 
@@ -51,7 +51,7 @@ class TDMPC2(torch.nn.Module):
 		_plan_val = getattr(self, "_plan_val", None)
 		if _plan_val is not None:
 			return _plan_val
-		if self.cfg.compile:
+		if self.cfg.compile_plan:
 			plan = torch.compile(self._plan, mode="reduce-overhead")
 		else:
 			plan = self._plan
