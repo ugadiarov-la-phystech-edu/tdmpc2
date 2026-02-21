@@ -85,6 +85,7 @@ enable_wandb: true
 save_csv: true
 save_jsonlines: true
 flush_every_seconds: 60
+log_every_pretraining: 10
 
 # misc
 compile: true

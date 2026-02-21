@@ -137,6 +137,7 @@ class OnlineTrainer(Trainer):
 		profiling_statistics = defaultdict(list)
 		self._tds = [None for _ in range(self.cfg.num_envs)]
 		first_step = True
+		do_pretrain = self._step < self.cfg.seed_steps
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if not (self._resume and first_step) and self.cfg.eval_freq > 0 and self._step % self.cfg.eval_freq == 0:
@@ -207,20 +208,29 @@ class OnlineTrainer(Trainer):
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
-				if self._step == self.cfg.seed_steps:
+				if do_pretrain:
 					num_updates = int(self.cfg.seed_steps / self.cfg.steps_per_update)
-					print('Pretraining agent on seed data...')
+					print('Pretraining agent on seed data...', flush=True)
 				else:
 					num_updates = max(1, int(self.cfg.num_envs / self.cfg.steps_per_update))
-				for _ in range(num_updates):
+				for i in range(1, num_updates + 1):
 					_train_metrics, update_time = stop_watch(self.agent.update, self.buffer)
 					_train_metrics = {k: v.item() for k, v in _train_metrics.items()}
 					buffer_sample_time = _train_metrics.pop('buffer_sample_time')
 					profiling_statistics['update_time'].append(update_time - buffer_sample_time)
 					profiling_statistics['buffer_sample_time'].append(buffer_sample_time)
+					if do_pretrain and i % self.cfg.log_every_pretraining == 0:
+						train_metrics.update(_train_metrics)
+						train_metrics.update(self.common_metrics())
+						train_metrics.update({k: sum(v) / len(v) for k, v in profiling_statistics.items()})
+						self.logger.log(train_metrics, 'train')
+						train_metrics = {}
+						profiling_statistics = defaultdict(list)
+						
 				train_metrics.update(_train_metrics)
-				if self._step == self.cfg.seed_steps:
-					print('Pretraining complete.')
+				if do_pretrain:
+					print('Pretraining complete.', flush=True)
+					do_pretrain = False
 
 			self._step += self.cfg.num_envs
 
