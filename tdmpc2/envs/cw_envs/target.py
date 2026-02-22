@@ -1,6 +1,8 @@
 import os
 
 import numpy as np
+from gymnasium.wrappers import AutoResetWrapper
+
 np.bool = bool
 np.float = float
 
@@ -26,7 +28,7 @@ from PIL import Image
 from .cw import MyCausalWorld
 
 
-def make_env(cfg):
+def make_env(cfg, autoreset=False):
 	"""
 	Make Robosuite environment.
 	"""
@@ -37,7 +39,10 @@ def make_env(cfg):
 	env = CwTargetEnvGymnasium(cfg)
 	if cfg.obs == 'rgb':
 		env = Pixels(env, cfg)
+
 	env = Timeout(env, max_episode_steps=cfg.episode_length)
+	if autoreset:
+		env = AutoResetWrapper(env)
 	env.unwrapped.max_episode_steps = env._max_episode_steps
 	return env
 
@@ -48,7 +53,9 @@ class CwTargetEnvGymnasium(gymnasium.Env):
 	def __init__(self, cfg):
 		config_path = os.path.join(os.path.dirname(__file__), 'config', 'cw_reaching-hard.yaml')
 		env_config = OmegaConf.load(config_path)
-		env_config['time_limit'] = cfg.episode_length
+
+		# time limit will be applied in Timeout wrapper
+		env_config['time_limit'] = cfg.episode_length + 1
 		env_config['obs_size'] = cfg.obs_image_size
 		seed = cfg.seed
 		self._env = CwTargetEnv(env_config, seed)
@@ -66,7 +73,10 @@ class CwTargetEnvGymnasium(gymnasium.Env):
 		return self._env.reset(), {}
 
 	def step(self, action):
-		return self._env.step(action)
+		o, r, done, info = self._env.step(action)
+		truncated = self._env.unwrapped._episode_length > self._env.unwrapped._max_episode_length
+		terminated = self._env.unwrapped._task.is_done()
+		return o, r, terminated, truncated, info
 
 
 def CwTargetEnv(config, seed):

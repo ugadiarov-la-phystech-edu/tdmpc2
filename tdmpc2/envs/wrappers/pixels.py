@@ -23,12 +23,12 @@ class Pixels(gym.Wrapper):
 		return torch.from_numpy(np.concatenate(self._frames))
 
 	def reset(self):
-		self.env.reset()
-		return self._get_obs(is_reset=True)
+		_, info = self.env.reset()
+		return self._get_obs(is_reset=True), info
 
 	def step(self, action):
-		_, reward, done, info = self.env.step(action)
-		return self._get_obs(), reward, done, info
+		_, reward, terminated, truncated, info = self.env.step(action)
+		return self._get_obs(), reward, terminated, truncated, info
 
 	def close(self):
 		self.env.close()

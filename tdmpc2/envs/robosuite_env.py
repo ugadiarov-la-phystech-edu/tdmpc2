@@ -4,6 +4,7 @@ import gymnasium as gym
 import numpy as np
 from PIL import Image
 import robosuite
+from gymnasium.wrappers import AutoResetWrapper
 from robosuite import load_controller_config
 from robosuite.utils.placement_samplers import UniformRandomSampler, ObjectPositionSampler
 
@@ -75,7 +76,9 @@ class RobosuiteEnv(gym.Env):
 		self.cfg = cfg
 		task_cfg = ROBOSUITE_TASKS[cfg.task]
 		self._task = task_cfg['env']
-		self._horizon = cfg.episode_length
+
+		# time limit will be applied in Timeout wrapper
+		self._horizon = cfg.episode_length + 1
 		self._initialization_noise_magnitude = task_cfg['initialization_noise_magnitude']
 		self._use_random_object_position = task_cfg['use_random_object_position']
 		self._raw_observation = task_cfg['raw_observation']
@@ -177,23 +180,27 @@ class RobosuiteEnv(gym.Env):
 
 	def step(self, action):
 		observation, reward, robosuite_done, info = self._env.step(action)
-		return self._process_observation(observation), reward, False, info
+		# in Robosuite done signal is defined only by horizon
+		return self._process_observation(observation), reward, robosuite_done, robosuite_done, info
 
 	def get_last_source_frame(self):
 		return self._last_source_frame
 
 
-def make_env(cfg):
+def make_env(cfg, autoreset=False):
 	"""
 	Make Robosuite environment.
 	"""
 	if cfg.task not in ROBOSUITE_TASKS:
 		raise InvalidTaskException(cfg.task, __name__)
 
-	assert cfg.obs in ('rgb', 'slots', 'state'), f'This task supports only image-based and slot-based observations, but cfg.obs={cfg.obs}'
+	assert cfg.obs in ('rgb', 'slots'), f'This task supports only image-based and slot-based observations, but cfg.obs={cfg.obs}'
 	env = RobosuiteEnv(cfg)
 	if cfg.obs == 'rgb':
 		env = Pixels(env, cfg)
+
 	env = Timeout(env, max_episode_steps=cfg.episode_length)
+	if autoreset:
+		env = AutoResetWrapper(env)
 	env.unwrapped.max_episode_steps = env._max_episode_steps
 	return env

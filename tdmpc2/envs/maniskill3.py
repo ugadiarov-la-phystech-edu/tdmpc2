@@ -1,5 +1,6 @@
 import numpy as np
 from PIL import Image
+from gymnasium.wrappers import AutoResetWrapper
 
 from common.utils import InvalidTaskException
 from envs.wrappers.pixels import Pixels
@@ -50,17 +51,19 @@ class ManiSkillWrapper(gym.Wrapper):
 
 	def reset(self, *args, **kwargs):
 		obs = self._unravel(self.env.reset())[0]
-		return self._process_observation(obs)
+		return self._process_observation(obs), {}
 
 	def step(self, action):
 		reward = 0
 		for _ in range(self.frame_skip):
 			obs, r, terminated, truncated, info = self._unravel(self.env.step(action))
 			reward += r
+			if terminated or truncated:
+				break
 
 		info = {k: v.item() for k, v in info.items()}
 		info["success"] = int(info.get("success", 0))
-		return self._process_observation(obs), reward, False, info
+		return self._process_observation(obs), reward, terminated, truncated, info
 
 	@property
 	def unwrapped(self):
@@ -70,7 +73,7 @@ class ManiSkillWrapper(gym.Wrapper):
 		return self.last_observation.copy()
 
 
-def make_env(cfg):
+def make_env(cfg, autoreset=False):
 	"""
 	Make ManiSkill3 environment.
 	"""
@@ -92,5 +95,7 @@ def make_env(cfg):
 		env = Pixels(env, cfg)
 
 	env = Timeout(env, max_episode_steps=cfg.get('episode_length'))
+	if autoreset:
+		env = AutoResetWrapper(env)
 	env.unwrapped.max_episode_steps = env._max_episode_steps
 	return env
