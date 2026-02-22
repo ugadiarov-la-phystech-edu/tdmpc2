@@ -1,3 +1,4 @@
+import collections
 import functools
 import time
 from copy import deepcopy
@@ -17,12 +18,15 @@ class Vectorized:
 		self.parallel = cfg.parallel
 		self.is_eval = is_eval
 		self.backend = None
+		self._need_to_wait = False
+		self._step_results = None
+		self._reset_results = None
 
 		def _make(rank):
 			_cfg = deepcopy(cfg)
 			_cfg.num_envs = 1
 			_cfg.seed = cfg.seed + rank
-			return env_fn(_cfg)
+			return env_fn(_cfg, autoreset=not is_eval)
 
 		fns = [functools.partial(_make, i) for i in range(int(is_eval) * self.cfg.num_envs, (int(is_eval) + 1) * self.cfg.num_envs)]
 		if self.parallel:
@@ -124,29 +128,78 @@ class Vectorized:
 		return self.backend.stack(observations)
 
 	def step(self, acts):
+		self.step_async(acts)
+		return self.step_wait()
+
+	def step_async(self, acts):
+		if self._need_to_wait:
+			raise ValueError('Asynchronous step is being executed. Wait for results using step_wait().')
+
+		self._need_to_wait = True
 		if self.parallel:
 			[pipe.send(('step', act)) for pipe, act in zip(self.pipes, acts)]
+		else:
+			self._step_results = [env.step(act) for env, act in zip(self.envs, acts)]
+
+	@staticmethod
+	def _merge_dicts(dicts):
+		result = collections.defaultdict(list)
+		all_keys = set()
+
+		for d in dicts:
+			all_keys.update(d.keys())
+
+		for key in all_keys:
+			for d in dicts:
+				result[key].append(d.get(key, None))
+
+		return result
+
+	def step_wait(self):
+		if not self._need_to_wait:
+			raise ValueError('Must call step_wait() after calling step_async()')
+
+		self._need_to_wait = False
+		if self.parallel:
 			step_results = [self._receive(pipe) for pipe in self.pipes]
 		else:
-			step_results = [env.step(act) for env, act in zip(self.envs, acts)]
+			step_results = self._step_results
+			self._step_results = None
 
 		obss, rews, terms, truncs, infos = zip(*step_results)
-		keys = set(infos[0].keys())
-		for info in infos[1:]:
-			assert keys == info.keys(), f'{keys} != {info.keys()}'
-
-		infos = {k: [info[k] for info in infos] for k in keys}
+		infos = self._merge_dicts(infos)
 		return self._stack_obs(obss), np.stack(rews), np.stack(terms), np.stack(truncs), infos
 
 	def reset(self, env_ids=None):
+		self.reset_async(env_ids)
+		return self.reset_wait(env_ids)
+
+	def reset_async(self, env_ids=None):
+		if self._need_to_wait:
+			raise ValueError('Asynchronous reset is being executed. Wait for results using reset_wait().')
+
+		self._need_to_wait = True
 		if env_ids is None:
 			env_ids = range(self.cfg.num_envs)
 
 		if self.parallel:
 			[self.pipes[i].send(('reset',)) for i in env_ids]
+		else:
+			self._reset_results = [self.envs[i].reset() for i in env_ids]
+
+	def reset_wait(self, env_ids=None):
+		if not self._need_to_wait:
+			raise ValueError('Must call reset_wait() after calling reset_async()')
+
+		self._need_to_wait = False
+		if env_ids is None:
+			env_ids = range(self.cfg.num_envs)
+
+		if self.parallel:
 			reset_results = [self._receive(self.pipes[i]) for i in env_ids]
 		else:
-			reset_results = [self.envs[i].reset() for i in env_ids]
+			reset_results = self._reset_results
+			self._reset_results = None
 
 		if isinstance(reset_results[0], tuple):
 			obss, infos = zip(*reset_results)

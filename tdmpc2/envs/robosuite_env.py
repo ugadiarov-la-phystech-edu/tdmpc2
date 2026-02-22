@@ -200,7 +200,7 @@ def make_env(cfg, autoreset=False):
 		env = Pixels(env, cfg)
 
 	env = Timeout(env, max_episode_steps=cfg.episode_length)
+	env.unwrapped.max_episode_steps = env._max_episode_steps
 	if autoreset:
 		env = AutoResetWrapper(env)
-	env.unwrapped.max_episode_steps = env._max_episode_steps
 	return env

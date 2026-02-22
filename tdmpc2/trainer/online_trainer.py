@@ -135,9 +135,11 @@ class OnlineTrainer(Trainer):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done = {}, torch.ones(self.cfg.num_envs, dtype=torch.bool)
 		profiling_statistics = defaultdict(list)
-		self._tds = [None for _ in range(self.cfg.num_envs)]
 		first_step = True
 		do_pretrain = self._step < self.cfg.seed_steps
+		obs = self.env.reset()
+		self._tds = [[self.to_td(obs[i])] for i in range(self.cfg.num_envs)]
+		self.buffer.init(self._tds[0])
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if not (self._resume and first_step) and self.cfg.eval_freq > 0 and self._step % self.cfg.eval_freq == 0:
@@ -148,63 +150,14 @@ class OnlineTrainer(Trainer):
 			if not first_step and self.cfg.save_freq > 0 and self._step % self.cfg.save_freq == 0:
 				self.logger.save_agent(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)
 
-			# Reset environment
-			if done.any().item():
-				env_ids = done.nonzero(as_tuple=True)[0].tolist()
-				reset_obs = self.env.reset(env_ids=env_ids)
-				if first_step:
-					assert done.all().item()
-					obs = reset_obs
-				else:
-					if self.cfg.check_termination and not self.cfg.episodic and info['terminated'].any().item():
-						raise ValueError('Termination detected but you are not in episodic mode. ' \
-						'Set `episodic=true` to enable support for terminations.')
-					episode_rewards, episode_successes, episode_lengths, episode_terminations = [], [], [], []
-					for env_id in env_ids:
-						tds = torch.cat(self._tds[env_id])
-						episode_rewards.append(tds['reward'].nansum(0).item())
-						episode_successes.append(info['success'][env_id].nanmean().item())
-						episode_lengths.append(len(self._tds[env_id]))
-						episode_terminations.append(info['terminated'][env_id].nanmean().item())
-						# Do not add too short trajectories
-						if len(tds) > self.cfg.horizon:
-							self._ep_idx, buffer_add_time = stop_watch(self.buffer.add, tds)
-							profiling_statistics['buffer_add_time'].append(buffer_add_time)
-
-					train_metrics.update(
-						episode_rewards=episode_rewards,
-						episode_successes=episode_successes,
-						episode_lengths=episode_lengths,
-						episode_terminations=episode_terminations,
-						episode_reward=torch.tensor(episode_rewards, dtype=torch.float32).mean().item(),
-						episode_success=torch.tensor(episode_successes, dtype=torch.float32).mean().item(),
-						episode_length=torch.tensor(episode_lengths, dtype=torch.float32).mean().item(),
-						episode_terminated=torch.tensor(episode_terminations, dtype=torch.float32).mean().item(),
-					)
-					train_metrics.update(self.common_metrics())
-					train_metrics.update({k: sum(v) / len(v) for k, v in profiling_statistics.items()})
-					self.logger.log(train_metrics, 'train')
-					train_metrics = {}
-					profiling_statistics = defaultdict(list)
-					obs[done] = reset_obs
-
-				for env_id in env_ids:
-					self._tds[env_id] = [self.to_td(obs[env_id])]
-
-				if first_step:
-					first_step = False
-					self.buffer.init(self._tds[0])
-
-			# Collect experience
+			# Select and execute action
 			if self._step > self.cfg.seed_steps:
 				action, act_time = stop_watch(self.agent.act, obs, t0=done.to(self.agent.device))
 				profiling_statistics['act_time'].append(act_time)
 			else:
 				action = self.env.rand_act()
-			(obs, reward, done, info), step_time = stop_watch(self.env.step, action)
-			profiling_statistics['env_step_time'].append(step_time)
-			for env_id in range(self.cfg.num_envs):
-				self._tds[env_id].append(self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id]))
+
+			self.env.step_async(action)
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
@@ -226,11 +179,62 @@ class OnlineTrainer(Trainer):
 						self.logger.log(train_metrics, 'train')
 						train_metrics = {}
 						profiling_statistics = defaultdict(list)
-						
+
 				train_metrics.update(_train_metrics)
 				if do_pretrain:
 					print('Pretraining complete.', flush=True)
 					do_pretrain = False
+
+			# Collect experience
+			(obs, reward, done, info), step_time = stop_watch(self.env.step_wait)
+			profiling_statistics['env_step_time'].append(step_time)
+
+			# Handle resets (assume autoreset is on for training)
+			reset_env_ids = set()
+			if done.any().item():
+				reset_env_ids = set(done.nonzero(as_tuple=True)[0].tolist())
+				episode_rewards, episode_successes, episode_lengths, episode_terminations = [], [], [], []
+				for env_id in reset_env_ids:
+					final_info = info['final_info'][env_id]
+					if self.cfg.check_termination and not self.cfg.episodic and final_info['terminated'].item():
+						raise ValueError('Termination detected but you are not in episodic mode. ' \
+										 'Set `episodic=true` to enable support for terminations.')
+					self._tds[env_id].append(self.to_td(
+						info['final_observation'][env_id], action[env_id], reward[env_id], final_info['terminated']
+					))
+					tds = torch.cat(self._tds[env_id])
+					episode_rewards.append(tds['reward'].nansum(0).item())
+					episode_successes.append(final_info['success'].nanmean().item())
+					episode_lengths.append(len(self._tds[env_id]))
+					episode_terminations.append(final_info['terminated'].nanmean().item())
+					# Do not add too short trajectories
+					if len(tds) > self.cfg.horizon:
+						self._ep_idx, buffer_add_time = stop_watch(self.buffer.add, tds)
+						profiling_statistics['buffer_add_time'].append(buffer_add_time)
+
+				train_metrics.update(
+					episode_rewards=episode_rewards,
+					episode_successes=episode_successes,
+					episode_lengths=episode_lengths,
+					episode_terminations=episode_terminations,
+					episode_reward=torch.tensor(episode_rewards, dtype=torch.float32).mean().item(),
+					episode_success=torch.tensor(episode_successes, dtype=torch.float32).mean().item(),
+					episode_length=torch.tensor(episode_lengths, dtype=torch.float32).mean().item(),
+					episode_terminated=torch.tensor(episode_terminations, dtype=torch.float32).mean().item(),
+				)
+				train_metrics.update(self.common_metrics())
+				train_metrics.update({k: sum(v) / len(v) for k, v in profiling_statistics.items()})
+				self.logger.log(train_metrics, 'train')
+				train_metrics = {}
+				profiling_statistics = defaultdict(list)
+
+			for env_id in range(self.cfg.num_envs):
+				if env_id in reset_env_ids:
+					self._tds[env_id] = [self.to_td(obs[env_id])]
+				else:
+					self._tds[env_id].append(
+						self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id])
+					)
 
 			self._step += self.cfg.num_envs
 

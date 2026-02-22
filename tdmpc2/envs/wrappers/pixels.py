@@ -22,8 +22,8 @@ class Pixels(gym.Wrapper):
 			self._frames.append(frame)
 		return torch.from_numpy(np.concatenate(self._frames))
 
-	def reset(self):
-		_, info = self.env.reset()
+	def reset(self, *args, **kwargs):
+		_, info = self.env.reset(*args, **kwargs)
 		return self._get_obs(is_reset=True), info
 
 	def step(self, action):

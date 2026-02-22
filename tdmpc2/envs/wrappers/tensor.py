@@ -41,23 +41,46 @@ class TensorWrapper(gym.Wrapper):
 			obs = self.env.reset()
 		return self._obs_to_tensor(obs)
 
-	def step(self, action, **kwargs):
-		if self._wrapped_vectorized:
-			obs, reward, terminated, truncated, info = self.env.step(action.numpy(), **kwargs)
-		else:
-			obs, reward, terminated, truncated, info = self.env.step(action.numpy())
+	def reset_wait(self):
+		return self._obs_to_tensor(self.env.reset_wait())
+
+	def _wrap_into_tensor(self, step_result):
+		obs, reward, terminated, truncated, info = step_result
 		reward = torch.tensor(reward, dtype=torch.float32)
 		terminated = torch.tensor(terminated)
 		truncated = torch.tensor(truncated)
 		done = terminated | truncated
-		if 'success' in info:
-			info['success'] = torch.tensor(info['success'], dtype=torch.float32)
-		else:
-			info['success'] = torch.zeros_like(reward)
+		data = {k: torch.zeros_like(reward) for k in ('success', 'terminated', 'truncated')}
+		if 'success' not in info:
+			info['success'] = data['success']
 
-		info['terminated'] = terminated.float()
-		info['truncated'] = truncated.float()
+		for env_id in range(done.shape[0]):
+			if self._wrapped_vectorized and not self.env.is_eval and done[env_id].item():
+				final_info = info['final_info'][env_id]
+				final_info['success'] = torch.tensor(final_info.get('success', False), dtype=torch.float32)
+				final_info['terminated'] = torch.tensor(final_info['terminated'], dtype=torch.float32)
+				final_info['truncated'] = torch.tensor(final_info['truncated'], dtype=torch.float32)
+				for key in data:
+					data[key][env_id] = final_info[key]
+			else:
+				for key in data:
+					data[key][env_id] = torch.tensor(info[key][env_id], dtype=torch.float32)
+
+		info.update(data)
+
 		return self._obs_to_tensor(obs), reward, done, info
+
+	def step_wait(self):
+		step_result = self.env.step_wait()
+		return self._wrap_into_tensor(step_result)
+
+	def step(self, action, **kwargs):
+		if self._wrapped_vectorized:
+			step_result = self.env.step(action.numpy(), **kwargs)
+		else:
+			step_result = self.env.step(action.numpy())
+
+		return self._wrap_into_tensor(step_result)
 
 	def render(self, **kwargs):
 		if self._wrapped_vectorized:
