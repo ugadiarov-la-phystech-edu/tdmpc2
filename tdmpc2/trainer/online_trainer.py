@@ -131,6 +131,12 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
+	def _obs_buffer(self, obs):
+		if self.cfg.obs == 'rgb':
+			return obs[-3:]
+
+		return obs
+
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done = {}, torch.ones(self.cfg.num_envs, dtype=torch.bool)
@@ -138,7 +144,7 @@ class OnlineTrainer(Trainer):
 		first_step = True
 		do_pretrain = self._step < self.cfg.seed_steps
 		obs = self.env.reset()
-		self._tds = [[self.to_td(obs[i])] for i in range(self.cfg.num_envs)]
+		self._tds = [[self.to_td(self._obs_buffer(obs[i]))] * self.cfg.frame_stack for i in range(self.cfg.num_envs)]
 		self.buffer.init(self._tds[0])
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
@@ -200,12 +206,15 @@ class OnlineTrainer(Trainer):
 						raise ValueError('Termination detected but you are not in episodic mode. ' \
 										 'Set `episodic=true` to enable support for terminations.')
 					self._tds[env_id].append(self.to_td(
-						info['final_observation'][env_id], action[env_id], reward[env_id], final_info['terminated']
-					))
+						self._obs_buffer(info['final_observation'][env_id]),
+						action[env_id],
+						reward[env_id],
+						final_info['terminated'])
+					)
 					tds = torch.cat(self._tds[env_id])
 					episode_rewards.append(tds['reward'].nansum(0).item())
 					episode_successes.append(final_info['success'].nanmean().item())
-					episode_lengths.append(len(self._tds[env_id]))
+					episode_lengths.append(len(self._tds[env_id]) - self.cfg.frame_stack + 1)
 					episode_terminations.append(final_info['terminated'].nanmean().item())
 					# Do not add too short trajectories
 					if len(tds) > self.cfg.horizon:
@@ -230,10 +239,10 @@ class OnlineTrainer(Trainer):
 
 			for env_id in range(self.cfg.num_envs):
 				if env_id in reset_env_ids:
-					self._tds[env_id] = [self.to_td(obs[env_id])]
+					self._tds[env_id] = [self.to_td(self._obs_buffer(obs[env_id]))] * self.cfg.frame_stack
 				else:
 					self._tds[env_id].append(
-						self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id])
+						self.to_td(self._obs_buffer(obs[env_id]), action[env_id], reward[env_id], info['terminated'][env_id])
 					)
 
 			self._step += self.cfg.num_envs

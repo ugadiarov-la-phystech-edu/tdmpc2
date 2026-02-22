@@ -11,9 +11,18 @@ STORAGE = {'lazy_tensor': LazyTensorStorage, 'lazy_memmap': LazyMemmapStorage}
 
 
 class BatchTransform(Transform):
-	def __init__(self, device):
+	def __init__(self, device, batch_size, segment_length, frame_stack):
 		super(BatchTransform, self).__init__()
 		self._device = device
+		self._batch_size = batch_size
+		self._segment_length = segment_length
+		self._frame_stack = frame_stack
+
+	def _get_batch_view(self, tensor):
+		return tensor.view(self._batch_size, self._segment_length, *tensor.shape[1:])
+
+	def _cut_prefix(self, tensor):
+		return self._get_batch_view(tensor)[:, self._frame_stack - 1:].flatten(end_dim=1)
 
 	def forward(self, td: TensorDict) -> TensorDict:
 		"""
@@ -21,19 +30,21 @@ class BatchTransform(Transform):
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
 		td = td.select("obs", "action", "reward", "terminated", "task", strict=False).to(self._device, non_blocking=True)
-		obs = td.get('obs').contiguous()
-		action = td.get('action').contiguous()
-		reward = td.get('reward').unsqueeze(-1).contiguous()
+		batch_view = self._get_batch_view(td.get('obs'))
+		stacked_batch_view = batch_view.unfold(dimension=1, size=self._frame_stack, step=1).movedim(-1, 2).flatten(start_dim=2, end_dim=3)
+		stacked_obs = stacked_batch_view.flatten(end_dim=1).contiguous()
+		action = self._cut_prefix(td.get('action')).contiguous()
+		reward = self._cut_prefix(td.get('reward').unsqueeze(-1)).contiguous()
 		terminated = td.get('terminated', None)
 		if terminated is not None:
-			terminated = td.get('terminated').unsqueeze(-1).contiguous()
+			terminated = self._cut_prefix(td.get('terminated').unsqueeze(-1)).contiguous()
 		else:
 			terminated = torch.zeros_like(reward)
 		task = td.get('task', None)
 		if task is not None:
 			task = task[0].contiguous()
 		return TensorDict(
-			obs=obs, action=action, reward=reward, terminated=terminated, task=task, batch_size=td.batch_size
+			obs=stacked_obs, action=action, reward=reward, terminated=terminated, task=task, batch_size=stacked_obs.shape[0]
 		)
 
 
@@ -55,7 +66,11 @@ class Buffer():
 			strict_length=True,
 			cache_values=cfg.multitask,
 		)
-		self._batch_size = cfg.batch_size * (cfg.horizon+1)
+		self.segment_length = cfg.horizon + 1
+		if self.cfg.obs == 'rgb':
+			self.segment_length += self.cfg.frame_stack - 1
+
+		self._batch_size = cfg.batch_size * self.segment_length
 		self._num_eps = 0
 		self._buffer = None
 		self._buffer_dir = make_dir(cfg.buffer_dir)
@@ -88,7 +103,7 @@ class Buffer():
 			pin_memory=False,
 			prefetch=self.cfg.num_envs,
 			batch_size=self._batch_size,
-			transform=BatchTransform(self._device),
+			transform=BatchTransform(self._device, self.cfg.batch_size, self.segment_length, self.cfg.frame_stack),
 		)
 
 	def init(self, tds):
