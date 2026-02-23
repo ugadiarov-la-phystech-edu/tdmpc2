@@ -131,6 +131,12 @@ class OnlineTrainer(Trainer):
 		batch_size=(1,))
 		return td
 
+	def _obs_buffer(self, obs):
+		if self.cfg.obs == 'rgb':
+			return obs[-3:]
+
+		return obs
+
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		train_metrics, done = {}, torch.ones(self.cfg.num_envs, dtype=torch.bool)
@@ -189,7 +195,7 @@ class OnlineTrainer(Trainer):
 					obs[done] = reset_obs
 
 				for env_id in env_ids:
-					self._tds[env_id] = [self.to_td(obs[env_id])]
+					self._tds[env_id] = [self.to_td(self._obs_buffer(obs[env_id]))] * self.cfg.frame_stack
 
 				if first_step:
 					first_step = False
@@ -204,7 +210,7 @@ class OnlineTrainer(Trainer):
 			(obs, reward, done, info), step_time = stop_watch(self.env.step, action)
 			profiling_statistics['env_step_time'].append(step_time)
 			for env_id in range(self.cfg.num_envs):
-				self._tds[env_id].append(self.to_td(obs[env_id], action[env_id], reward[env_id], info['terminated'][env_id]))
+				self._tds[env_id].append(self.to_td(self._obs_buffer(obs[env_id]), action[env_id], reward[env_id], info['terminated'][env_id]))
 
 			# Update agent
 			if self._step >= self.cfg.seed_steps:
