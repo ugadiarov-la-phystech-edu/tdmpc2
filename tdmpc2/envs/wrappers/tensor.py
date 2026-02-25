@@ -74,6 +74,12 @@ class TensorWrapper(gym.Wrapper):
 		step_result = self.env.step_wait()
 		return self._wrap_into_tensor(step_result)
 
+	def step_async(self, action, **kwargs):
+		if self._wrapped_vectorized:
+			self.env.step_async(action.numpy(), **kwargs)
+		else:
+			self.env.step_async(action.numpy())
+
 	def step(self, action, **kwargs):
 		if self._wrapped_vectorized:
 			step_result = self.env.step(action.numpy(), **kwargs)
