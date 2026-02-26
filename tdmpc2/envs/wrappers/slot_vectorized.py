@@ -25,7 +25,7 @@ class SlotVectorized(Vectorized):
 		self._prev_slots = slots
 		self._frame_stack[env_ids, :, :, :] = slots.unsqueeze(1)
 
-		return self._frame_stack.clone()
+		return self._frame_stack[env_ids].clone()
 
 	def step_wait(self):
 		assert self._prev_slots is not None, f'Previous slots {self._prev_slots} are None'
