@@ -22,7 +22,11 @@ class SlotVectorized(Vectorized):
 
 		obss = super().reset_wait(env_ids)
 		slots = self._slot_extractor(obss, None)
-		self._prev_slots = slots
+		if self._prev_slots is None:
+			self._prev_slots = slots
+		else:
+			self._prev_slots[env_ids] = slots
+
 		self._frame_stack[env_ids, :, :, :] = slots.unsqueeze(1)
 
 		return self._frame_stack[env_ids].clone()
