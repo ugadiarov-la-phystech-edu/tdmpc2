@@ -1,0 +1,23 @@
+# akorn
+L: 1
+ch: 256
+autorescale: False
+psize: 8
+T: 8
+maxpool: True
+heads: 8
+gta: True
+N: 4
+gamma: 1
+J: attn
+use_omega: False
+global_omg: False
+c_norm: gn
+learn_omg: False
+use_ro_x: False
+no_ro: False
+project: True
+
+# ksavi
+num_slot: 3
+slot_size: 64
