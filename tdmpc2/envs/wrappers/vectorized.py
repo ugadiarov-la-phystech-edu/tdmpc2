@@ -168,7 +168,7 @@ class Vectorized:
 
 		obss, rews, terms, truncs, infos = zip(*step_results)
 		infos = self._merge_dicts(infos)
-		return self._stack_obs(obss), np.stack(rews), np.stack(terms), np.stack(truncs), infos
+		return self._stack_obs(obss), torch.tensor(rews), torch.tensor(terms), torch.tensor(truncs), infos
 
 	def reset(self, env_ids=None):
 		self.reset_async(env_ids)

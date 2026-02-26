@@ -22,18 +22,48 @@ class WorldModel(nn.Module):
 			self.register_buffer("_action_masks", torch.zeros(len(cfg.tasks), cfg.action_dim))
 			for i in range(len(cfg.tasks)):
 				self._action_masks[i, :cfg.action_dims[i]] = 1.
-		self._encoder = layers.enc(cfg)
-		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
-		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
-		self._termination = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 1) if cfg.episodic else None
-		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
-		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
-		self.apply(init.weight_init)
-		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
+		self._encoder, self._dynamics, self._reward, self._termination, self._pi, self._Qs = self._build_components(cfg)
+		if not cfg.episodic:
+			self._termination = None
 
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
 		self.init()
+
+	@staticmethod
+	def _build_components(cfg):
+		if 'ocr_model' in cfg:
+			encoder = nn.Identity()
+			num_slot = cfg.ocr_config['num_slot']
+			slot_size = cfg.ocr_config['slot_size']
+			frame_stack = cfg.ocr_frame_stack
+			dynamics = OCDynamicsModel(frame_stack, num_slot, slot_size, cfg.mlp_dim, cfg.action_dim)
+			reward = OCRewardModel(frame_stack, num_slot, slot_size, cfg.mlp_dim, cfg.action_dim, max(cfg.num_bins, 1))
+			termination = OCTermination(frame_stack, num_slot, slot_size, cfg.mlp_dim)
+			pi = OCPolicy(frame_stack, num_slot, slot_size, cfg.mlp_dim, cfg.action_dim)
+			Qs = layers.Ensemble([OCRewardModel(frame_stack, num_slot, slot_size, cfg.mlp_dim, cfg.action_dim,
+												max(cfg.num_bins, 1)) for _ in range(cfg.num_q)])
+
+			for model in encoder, dynamics, reward, termination, pi, Qs:
+				model.apply(init.weight_init)
+
+			init.zero_([reward.mlp.weight, Qs.params['mlp', 'weight']])
+		else:
+			encoder = layers.enc(cfg)
+			dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2 * [cfg.mlp_dim],
+										cfg.latent_dim, act=layers.SimNorm(cfg))
+			dynamics.loss = nn.functional.mse_loss
+			reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2 * [cfg.mlp_dim], max(cfg.num_bins, 1))
+			termination = layers.mlp(cfg.latent_dim + cfg.task_dim, 2 * [cfg.mlp_dim],1)
+			pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2 * [cfg.mlp_dim], 2 * cfg.action_dim)
+			Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2 * [cfg.mlp_dim],
+												   max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
+			for model in encoder, dynamics, reward, termination, pi, Qs:
+				model.apply(init.weight_init)
+
+			init.zero_([reward.module[-1].weight, Qs.params["module", "2", "weight"]])
+
+		return encoder, dynamics, reward, termination, pi, Qs
 
 	def init(self):
 		# Create params
@@ -107,8 +137,13 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			obs = self.task_emb(obs, task)
-		if self.cfg.obs == 'rgb' and obs.ndim == 5:
+		if self.cfg.obs == 'rgb' and 'ocr_model' in self.cfg:
+			# obs.shape = (num_envs, frame_stack, num_slots, slot_dim) -> (num_envs, num_slots, frame_stack, slot_dim)
+			# obs.shape = (num_envs, num_slots, frame_stack, slot_dim) -> (num_envs, num_slots * frame_stack * slot_dim)
+			return obs.movedim(source=-3, destination=-2).flatten(start_dim=-3)
+		elif self.cfg.obs == 'rgb' and obs.ndim == 5:
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
+
 		return self._encoder[self.cfg.obs](obs)
 
 	def next(self, z, a, task):
@@ -117,8 +152,10 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
-		return self._dynamics(z)
+		return self._dynamics((z, a))
+
+	def dynamics_loss(self, input_z, target_z):
+		return self._dynamics.loss(input_z, target_z)
 
 	def reward(self, z, a, task):
 		"""
@@ -126,8 +163,7 @@ class WorldModel(nn.Module):
 		"""
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
-		z = torch.cat([z, a], dim=-1)
-		return self._reward(z)
+		return self._reward((z, a))
 	
 	def termination(self, z, task, unnormalized=False):
 		"""
@@ -197,14 +233,13 @@ class WorldModel(nn.Module):
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 
-		z = torch.cat([z, a], dim=-1)
 		if target:
 			qnet = self._target_Qs
 		elif detach:
 			qnet = self._detach_Qs
 		else:
 			qnet = self._Qs
-		out = qnet(z)
+		out = qnet((z, a))
 
 		if return_type == 'all':
 			return out
@@ -214,3 +249,104 @@ class WorldModel(nn.Module):
 		if return_type == "min":
 			return Q.min(0).values
 		return Q.sum(0) / 2
+
+
+class OCDynamicsModel(nn.Module):
+	def __init__(self, frame_stack, num_slots, slot_size, hidden_dim, action_dim, use_interactions=True):
+		super().__init__()
+		self._frame_stack = frame_stack
+		self._slot_size = slot_size
+		input_dim = self._frame_stack * self._slot_size
+		self.gnn = layers.GNN(input_dim=input_dim, hidden_dim=hidden_dim, output_dim=self._slot_size,
+							  action_dim=action_dim, num_objects=num_slots, ignore_action=False,
+							  copy_action=True, edge_actions=True, use_interactions=use_interactions)
+
+	def forward(self, slots_action):
+		# predicts the next state and makes frame stack using values from the previous step
+		slots, action = slots_action
+		batch_shape = slots.shape[:-1]
+		slots = slots.reshape(*batch_shape, self.gnn.num_objects, self.gnn.input_dim)
+		output = self.gnn(slots.flatten(end_dim=-3), action.flatten(end_dim=-2))
+		output = output.unflatten(dim=0, sizes=batch_shape)
+		slots = slots.unflatten(dim=-1, sizes=(self._frame_stack, self._slot_size))
+		output = torch.cat((slots[..., 1:, :], output.unsqueeze(-2)), dim=-2)
+		return output.reshape(*batch_shape, -1)
+
+	def loss(self, input_slots, target_slots):
+		# ignore old frames from stack when computing loss
+		input_slots = input_slots.unflatten(dim=-1, sizes=(self.gnn.num_objects, self._frame_stack, self._slot_size))
+		target_slots = target_slots.unflatten(dim=-1, sizes=(self.gnn.num_objects, self._frame_stack, self._slot_size))
+		return nn.functional.mse_loss(input_slots[..., -1, :], target_slots[..., -1, :])
+
+
+class OCRewardModel(nn.Module):
+	def __init__(self, frame_stack, num_slots, slot_size, hidden_dim, action_dim, num_bins, use_interactions=True):
+		super().__init__()
+		self.act = nn.ReLU(inplace=True)
+		input_dim = frame_stack * slot_size
+		self.gnn = layers.GNN(input_dim=input_dim, hidden_dim=hidden_dim,
+							  action_dim=action_dim, num_objects=num_slots + 1, ignore_action=False,
+							  copy_action=True, edge_actions=True, use_interactions=use_interactions)
+		self.learnable_embedding = nn.Parameter(torch.randn(1, input_dim))
+		self.mlp = nn.Linear(in_features=input_dim, out_features=max(num_bins, 1))
+		with torch.no_grad():
+			limit = (6.0 / (1 + input_dim)) ** 0.5
+			torch.nn.init.uniform_(self.learnable_embedding, -limit, limit)
+
+	def forward(self, slots_action):
+		slots, action = slots_action
+		batch_shape = slots.shape[:-1]
+		slots = slots.reshape(*batch_shape, self.gnn.num_objects - 1, self.gnn.input_dim)
+		embedding = self.learnable_embedding.reshape((1,) * len(batch_shape) + self.learnable_embedding.shape)
+		slots = torch.cat([slots, embedding.expand((*batch_shape, -1, -1))], dim=-2)
+		x = self.gnn(slots.flatten(end_dim=-3), action.flatten(end_dim=-2))[:, -1]
+		x = x.reshape(*batch_shape, -1)
+		return self.mlp(x)
+
+
+class OCTermination(nn.Module):
+	def __init__(self, frame_stack, num_slots, slot_size, hidden_dim, use_interactions=True):
+		super().__init__()
+		self.act = nn.ReLU(inplace=True)
+		input_dim = frame_stack * slot_size
+		self.gnn = layers.GNN(input_dim=input_dim, hidden_dim=hidden_dim, action_dim=0,
+							  num_objects=num_slots + 1, ignore_action=True, copy_action=False, edge_actions=False,
+							  use_interactions=use_interactions)
+		self.learnable_embedding = nn.Parameter(torch.randn(1, input_dim))
+		self.mlp = nn.Linear(in_features=input_dim, out_features=1)
+		with torch.no_grad():
+			limit = (6.0 / (1 + input_dim)) ** 0.5
+			torch.nn.init.uniform_(self.learnable_embedding, -limit, limit)
+
+	def forward(self, slots):
+		batch_shape = slots.shape[:-1]
+		slots = slots.reshape(*batch_shape, self.gnn.num_objects - 1, self.gnn.input_dim)
+		embedding = self.learnable_embedding.reshape((1,) * len(batch_shape) + self.learnable_embedding.shape)
+		slots = torch.cat([slots, embedding.expand((*batch_shape, -1, -1))], dim=-2)
+		x = self.gnn(slots.flatten(end_dim=-3), action=None)[:, -1]
+		x = x.reshape(*batch_shape, -1)
+		return self.mlp(x)
+
+
+class OCPolicy(nn.Module):
+	def __init__(self, frame_stack, num_slots, slot_size, hidden_dim, action_dim, use_interactions=True):
+		super().__init__()
+		self.act = nn.ReLU(inplace=True)
+		input_dim = frame_stack * slot_size
+		self.gnn = layers.GNN(input_dim=input_dim, hidden_dim=hidden_dim, action_dim=0,
+							  num_objects=num_slots + 1, ignore_action=True, copy_action=False, edge_actions=False,
+							  use_interactions=use_interactions)
+		self.learnable_embedding = nn.Parameter(torch.randn(1, input_dim))
+		self.mlp = nn.Linear(in_features=input_dim, out_features=2 * action_dim)
+		with torch.no_grad():
+			limit = (6.0 / (1 + input_dim)) ** 0.5
+			torch.nn.init.uniform_(self.learnable_embedding, -limit, limit)
+
+	def forward(self, slots):
+		batch_shape = slots.shape[:-1]
+		slots = slots.reshape(*batch_shape, self.gnn.num_objects - 1, self.gnn.input_dim)
+		embedding = self.learnable_embedding.reshape((1,) * len(batch_shape) + self.learnable_embedding.shape)
+		slots = torch.cat([slots, embedding.expand((*batch_shape, -1, -1))], dim=-2)
+		x = self.gnn(slots.flatten(end_dim=-3), action=None)[:, -1]
+		x = x.reshape(*batch_shape, -1)
+		return self.mlp(x)

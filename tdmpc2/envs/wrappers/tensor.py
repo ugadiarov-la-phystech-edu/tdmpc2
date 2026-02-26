@@ -1,8 +1,8 @@
-from collections import defaultdict
-
 import gymnasium as gym
 import numpy as np
 import torch
+
+from envs.wrappers.vectorized import Vectorized
 
 
 class TensorWrapper(gym.Wrapper):
@@ -12,7 +12,7 @@ class TensorWrapper(gym.Wrapper):
 
 	def __init__(self, env):
 		super().__init__(env)
-		self._wrapped_vectorized = env.__class__.__name__ == 'Vectorized'
+		self._wrapped_vectorized = isinstance(env, Vectorized)
 	
 	def rand_act(self):
 		if self._wrapped_vectorized:
@@ -73,6 +73,12 @@ class TensorWrapper(gym.Wrapper):
 	def step_wait(self):
 		step_result = self.env.step_wait()
 		return self._wrap_into_tensor(step_result)
+
+	def step_async(self, action, **kwargs):
+		if self._wrapped_vectorized:
+			self.env.step_async(action.numpy(), **kwargs)
+		else:
+			self.env.step_async(action.numpy())
 
 	def step(self, action, **kwargs):
 		if self._wrapped_vectorized:

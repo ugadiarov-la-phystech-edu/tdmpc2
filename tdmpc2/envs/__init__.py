@@ -5,8 +5,10 @@ import gymnasium as gym
 
 from common.utils import InvalidTaskException, MissingDependencyException
 from envs.wrappers.multitask import MultitaskWrapper
+from envs.wrappers.slot_vectorized import SlotVectorized
 from envs.wrappers.tensor import TensorWrapper
 from envs.wrappers.vectorized import Vectorized
+from ocr.tools import build_ocr_model, SlotExtractor
 
 
 def missing_dependencies(suite, exception):
@@ -94,7 +96,13 @@ def make_env(cfg, is_eval=False):
 		if env is None:
 			raise ValueError(f'Failed to make environment "{cfg.task}": please verify that dependencies are installed and that the task exists.')
 
-		env = Vectorized(cfg, fn, is_eval)
+		if 'ocr_model' in cfg and cfg.ocr_model is not None:
+			ocr_model = build_ocr_model(cfg)
+			slot_extractor = SlotExtractor(model=ocr_model, device=cfg.ocr_device)
+			env = SlotVectorized(cfg, fn, slot_extractor, is_eval=False)
+		else:
+			env = Vectorized(cfg, fn, is_eval)
+
 		env = TensorWrapper(env)
 	try: # Dict
 		cfg.obs_shape = {k: v.shape for k, v in env.observation_space.spaces.items()}

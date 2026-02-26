@@ -111,3 +111,10 @@ action_dims: ???
 episode_lengths: ???
 seed_steps: ???
 bin_size: ???
+
+# common settings for object centric representation models
+ocr_model: ???
+ocr_config_path: ???
+ocr_checkpoint_path: ???
+ocr_device: ???
+ocr_frame_stack: 1

@@ -27,7 +27,11 @@ def cfg_to_dataclass(cfg, frozen=False):
 
 		return result
 
+	def contains(self, attr_name):
+		return hasattr(self, attr_name)
+
 	dataclass.get = get
+	dataclass.__contains__ = contains
 	return dataclass()
 
 
@@ -97,5 +101,15 @@ def parse_cfg(cfg: OmegaConf) -> OmegaConf:
 		if key in cfg and cfg[key] in (None, ''):
 			with open_dict(cfg):
 				del cfg[key]
+
+	if 'ocr_model' in cfg:
+		for key in ('ocr_config_path', 'ocr_checkpoint_path', 'ocr_device'):
+			if key not in cfg:
+				raise ValueError(f'{key} must be defined.')
+
+		OmegaConf.update(cfg, 'ocr_config', OmegaConf.load(cfg['ocr_config_path']), force_add=True)
+		cfg.latent_dim = cfg.ocr_frame_stack * cfg.ocr_config['num_slot'] * cfg.ocr_config['slot_size']
+		print(f'Override cfg.latent_dim for object-centric world model:'
+			  f' cfg.latent_dim = cfg.ocr_frame_stack * ocr_config.num_slot * ocr_config.slot_size = {cfg.latent_dim}')
 
 	return cfg_to_dataclass(cfg)
