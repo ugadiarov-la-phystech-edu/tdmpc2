@@ -45,6 +45,9 @@ class Buffer():
 
 	def __init__(self, cfg):
 		self.cfg = cfg
+		if self.cfg.buffer_storage_type not in STORAGE:
+			raise ValueError(f'Unsupported storage type: {self.cfg.buffer_storage_type}')
+
 		self._device = torch.device(self.cfg.device)
 		self._capacity = min(cfg.buffer_size, cfg.steps)
 		self._sampler = SliceSampler(
@@ -59,10 +62,8 @@ class Buffer():
 		self._num_eps = 0
 		self._buffer = None
 		self._buffer_dir = make_dir(cfg.buffer_dir)
-		self._buffer_path = self._buffer_dir / 'checkpoint.buf'
-		self._buffer_state_dict_path = self._buffer_dir / 'replay_buffer.pt'
-		if self.cfg.buffer_storage_type not in STORAGE:
-			raise ValueError(f'Unsupported storage type: {self.cfg.buffer_storage_type}')
+		if self.cfg.buffer_storage_type == 'lazy_memmap':
+			self._buffer_storage_path = make_dir(self._buffer_dir / 'storage')
 
 	@property
 	def capacity(self):
@@ -112,18 +113,18 @@ class Buffer():
 		cls = STORAGE[self.cfg.buffer_storage_type]
 		kwargs = dict(max_size=self._capacity, device=torch.device(storage_device))
 		if self.cfg.buffer_storage_type == 'lazy_memmap':
-			kwargs.update(dict(existsok=True, scratch_dir=self._buffer_path))
-
-		if self._buffer_path.exists():
-			print(f'Loading buffer data from from {self._buffer_path}', flush=True)
+			kwargs.update(dict(existsok=True, scratch_dir=self._buffer_storage_path))
 
 		storage = cls(**kwargs)
 		buffer = self._reserve_buffer(storage)
-		if self.cfg.buffer_storage_type == 'lazy_tensor' and self._buffer_path.exists():
-			buffer.loads(self._buffer_path)
-		elif self.cfg.buffer_storage_type == 'lazy_memmap' and self._buffer_state_dict_path.exists():
-			print(f'Loading buffer state dict from from {self._buffer_state_dict_path}', flush=True)
-			buffer.load_state_dict(torch.load(self._buffer_state_dict_path, weights_only=False))
+		if self.cfg.get('resume', False):
+			checkpoint_buffer = self._buffer_dir
+		else:
+			checkpoint_buffer = self.cfg.get('checkpoint_buffer', None)
+
+		if checkpoint_buffer:
+			print(f'Loading buffer data from from {checkpoint_buffer}', flush=True)
+			buffer.loads(checkpoint_buffer)
 
 		self._buffer = buffer
 
@@ -159,7 +160,4 @@ class Buffer():
 		return self._prepare_batch(td)
 
 	def dumps(self):
-		if self.cfg.buffer_storage_type == 'lazy_tensor':
-			self._buffer.dumps(self._buffer_path)
-		else:
-			torch.save(self._buffer.state_dict(), self._buffer_state_dict_path)
+		self._buffer.dumps(self._buffer_dir)

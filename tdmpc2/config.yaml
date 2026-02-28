@@ -16,7 +16,9 @@ eval_episodes: 10
 eval_freq: 50000
 
 # checkpoint
+resume: false
 checkpoint: ???
+checkpoint_buffer: ???
 
 # training
 steps: 10_000_000
