@@ -114,7 +114,6 @@ class Logger:
 		self._flush_every_seconds = cfg.flush_every_seconds
 		self._metrics_history = []
 		self._save_agent = cfg.save_agent
-		self._save_buffer = cfg.save_buffer
 		self._group = cfg_to_group(cfg)
 		self._seed = cfg.seed
 		self._eval = []
