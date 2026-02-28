@@ -237,5 +237,6 @@ class OnlineTrainer(Trainer):
 					)
 
 			self._step += self.cfg.num_envs
+			first_step = False
 
 		self.logger.finish(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)
