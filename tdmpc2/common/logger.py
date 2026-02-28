@@ -114,6 +114,7 @@ class Logger:
 		self._flush_every_seconds = cfg.flush_every_seconds
 		self._metrics_history = []
 		self._save_agent = cfg.save_agent
+		self._save_buffer = cfg.save_buffer
 		self._group = cfg_to_group(cfg)
 		self._seed = cfg.seed
 		self._eval = []
@@ -164,10 +165,18 @@ class Logger:
 	def model_dir(self):
 		return self._model_dir
 
-	def save_agent(self, agent=None, statistics={}, identifier='final', buffer=None):
+	@property
+	def checkpoint_path(self):
+		return self._model_dir / "checkpoint.pt"
+
+	def save_agent(self, agent=None, statistics={}, identifier=None, buffer=None):
 		if self._save_agent and agent:
 			print(f'Saving agent: {self._model_dir}')
-			fp = self._model_dir / f'{str(identifier)}.pt'
+			if identifier is None:
+				fp = self.checkpoint_path
+			else:
+				fp = self._model_dir / f'{str(identifier)}.pt'
+
 			agent.save(statistics, fp)
 			buffer.dumps()
 			if self._wandb:

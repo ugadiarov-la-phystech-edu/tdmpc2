@@ -17,11 +17,15 @@ class OnlineTrainer(Trainer):
 		self._step = 0
 		self._ep_idx = 0
 		self._start_time = time()
-		self._resume = False
-		if self.cfg.get('checkpoint', None):
-			path = os.path.join(self.cfg.checkpoint, 'checkpoint.pt')
-			print(f'Loading checkpoint: {path}')
-			state_dict = torch.load(path)
+		self._resume = self.cfg.get('resume', False)
+		if self._resume:
+			checkpoint_path = self.logger.checkpoint_path
+		else:
+			checkpoint_path = self.cfg.get('checkpoint_path', None)
+
+		if checkpoint_path:
+			print(f'Loading checkpoint: {checkpoint_path}')
+			state_dict = torch.load(checkpoint_path)
 			self.agent.load(state_dict)
 			self._step = state_dict['step']
 			self._ep_idx = state_dict['episode']
@@ -148,7 +152,7 @@ class OnlineTrainer(Trainer):
 				self.logger.log(eval_metrics, 'eval', flush=True)
 
 			if not first_step and self.cfg.save_freq > 0 and self._step % self.cfg.save_freq == 0:
-				self.logger.save_agent(self.agent, statistics=self.common_metrics(), identifier='checkpoint', buffer=self.buffer)
+				self.logger.save_agent(self.agent, statistics=self.common_metrics(), buffer=self.buffer)
 
 			# Select and execute action
 			if self._step > self.cfg.seed_steps:
