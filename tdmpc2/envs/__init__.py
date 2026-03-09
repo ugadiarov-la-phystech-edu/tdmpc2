@@ -4,11 +4,11 @@ import warnings
 import gymnasium as gym
 
 from common.utils import InvalidTaskException, MissingDependencyException
-from envs.wrappers.multitask import MultitaskWrapper
-from envs.wrappers.slot_vectorized import SlotVectorized
-from envs.wrappers.tensor import TensorWrapper
-from envs.wrappers.vectorized import Vectorized
-from ocr.tools import build_ocr_model, SlotExtractor
+# from envs.wrappers.multitask import MultitaskWrapper
+# from envs.wrappers.slot_vectorized import SlotVectorized
+# from envs.wrappers.tensor import TensorWrapper
+# from envs.wrappers.vectorized import Vectorized
+# from ocr.tools import build_ocr_model, SlotExtractor
 
 
 def missing_dependencies(suite, exception):
