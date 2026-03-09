@@ -13,12 +13,38 @@ MANISKILL_TASKS = {
 	'push-cube': dict(
 		env='PushCube-v1',
 		control_mode='pd_joint_delta_pos',
+		background_color=None,
+	),
+	'push-cube_red': dict(
+		env='PushCube-v1',
+		control_mode='pd_joint_delta_pos',
+		background_color='red',
+	),
+	'push-cube_green': dict(
+		env='PushCube-v1',
+		control_mode='pd_joint_delta_pos',
+		background_color='green',
+	),
+	'push-cube_blue': dict(
+		env='PushCube-v1',
+		control_mode='pd_joint_delta_pos',
+		background_color='blue',
+	),
+	'push-cube_white': dict(
+		env='PushCube-v1',
+		control_mode='pd_joint_delta_pos',
+		background_color='white',
+	),
+	'push-cube_black': dict(
+		env='PushCube-v1',
+		control_mode='pd_joint_delta_pos',
+		background_color='black',
 	),
 }
 
 
 class ManiSkillWrapper(gym.Wrapper):
-	def __init__(self, env, cfg, frame_skip=1):
+	def __init__(self, env, cfg, background, frame_skip=1):
 		super().__init__(env)
 		self.env = env
 		self.cfg = cfg
@@ -32,10 +58,20 @@ class ManiSkillWrapper(gym.Wrapper):
 		self.env.reset(seed=cfg.seed)
 		self.frame_skip = frame_skip
 		self.last_observation = None
+		self.background = background
+		self.background_segmentation_id = torch.as_tensor(
+			self.env.unwrapped.scene.actors["ground"].per_scene_id, dtype=torch.int16)
 
-	@staticmethod
-	def _unravel(step_result):
-		unravel_result = [step_result[0]['sensor_data']['base_camera']['rgb'][0]]
+	def _unravel(self, step_result):
+		visual_data = step_result[0]['sensor_data']['base_camera']
+		rgb = visual_data['rgb'][0]
+		if self.background is not None:
+			segmentation_ids = visual_data['segmentation'][0]
+			mask = torch.zeros_like(segmentation_ids, dtype=torch.uint8)
+			mask[torch.isin(segmentation_ids, self.background_segmentation_id)] = 1
+			rgb = rgb * (1 - mask) + self.background * mask
+
+		unravel_result = [rgb]
 		unravel_result += [x[0] if hasattr(x, '__len__') else x for x in step_result[1:-1]]
 		info = {key: value[0] if hasattr(value, '__len__') else value for key, value in step_result[-1].items()}
 		unravel_result.append(info)
@@ -81,16 +117,32 @@ def make_env(cfg, autoreset=False):
 		raise InvalidTaskException(cfg.task, __name__)
 	assert cfg.obs in ('rgb', 'slots',), 'This task supports only image-based and slot-based observations.'
 	task_cfg = MANISKILL_TASKS[cfg.task]
+	size = 224
 	env = gym.make(
 		task_cfg['env'],
-		obs_mode='rgbd',
+		obs_mode='rgb+segmentation',
 		control_mode=task_cfg['control_mode'],
 		render_mode='rgb_array',
-		sensor_configs=dict(width=224, height=224),
+		sensor_configs=dict(width=size, height=size),
 	)
+	background_color = task_cfg['background_color']
+	background = torch.zeros((size, size, 3), dtype=torch.uint8)
+	if background_color == 'red':
+		background[:, :, 0] = 255
+	elif background_color == 'green':
+		background[:, :, 1] = 255
+	elif background_color == 'blue':
+		background[:, :, 2] = 255
+	elif background_color == 'white':
+		background[:, :, :] = 255
+	elif background_color == 'black':
+		background[:, :, :] = 0
+	else:
+		background = None
+
 	# Unwrap TimeLimit wrapper
 	env = env.env
-	env = ManiSkillWrapper(env, cfg)
+	env = ManiSkillWrapper(env, cfg, background)
 	if cfg.obs == 'rgb':
 		env = Pixels(env, cfg)
 
@@ -99,3 +151,45 @@ def make_env(cfg, autoreset=False):
 	if autoreset:
 		env = AutoResetWrapper(env)
 	return env
+
+
+if __name__ == '__main__':
+	from types import SimpleNamespace
+	import torch
+	import matplotlib
+	matplotlib.use('TkAgg')
+
+	import matplotlib.pyplot as plt
+
+	size = 224
+	task_cfg = MANISKILL_TASKS['push-cube_white']
+	env = gym.make(
+		task_cfg['env'],
+		obs_mode='rgb+segmentation',
+		control_mode=task_cfg['control_mode'],
+		render_mode='rgb_array',
+		sensor_configs=dict(width=size, height=size),
+	)
+	background_color = task_cfg['background_color']
+	background = torch.zeros((size, size, 3), dtype=torch.uint8)
+	if background_color == 'red':
+		background[:, :, 0] = 255
+	elif background_color == 'green':
+		background[:, :, 1] = 255
+	elif background_color == 'blue':
+		background[:, :, 2] = 255
+	elif background_color == 'white':
+		background[:, :, :] = 255
+	elif background_color == 'black':
+		background[:, :, :] = 0
+	else:
+		background = None
+
+	cfg = {'obs_image_size': 128, 'seed': 0}
+	cfg = SimpleNamespace(**cfg)
+
+	env = ManiSkillWrapper(env, cfg, background)
+
+	obss = [env.reset()[0]]
+	plt.imshow(obss[0])
+	plt.show()
